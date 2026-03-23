@@ -9,8 +9,10 @@ from nacl.signing import SigningKey
 from bench_boss.bot import (
     APPLICATION_COMMAND,
     CHANNEL_MESSAGE_WITH_SOURCE,
+    MESSAGE_COMPONENT,
     PING,
     PONG,
+    UPDATE_MESSAGE,
     handle_interaction,
     verify_signature,
 )
@@ -37,6 +39,14 @@ def make_schedule_body(url: str, guild_id: str = "123") -> dict:
             "name": "schedule",
             "options": [{"name": "url", "value": url}],
         },
+    }
+
+
+def make_rsvp_body(custom_id: str, user_id: str = "user1") -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "member": {"user": {"id": user_id}},
+        "data": {"custom_id": custom_id},
     }
 
 
@@ -126,7 +136,7 @@ class TestScheduleInteraction:
             "guild_id": "123",
             "data": {"name": "schedule", "options": []},
         }
-        result = handle_interaction(body, bot_token="token")
+        result = handle_interaction(body)
         assert result["statusCode"] == 200
         assert "No calendar URL provided" in result["body"]["data"]["content"]
 
@@ -134,7 +144,7 @@ class TestScheduleInteraction:
         with patch("bench_boss.bot.WebCalReader") as mock_reader:
             mock_reader.return_value.get_upcoming.side_effect = Exception("timeout")
             result = handle_interaction(
-                make_schedule_body("https://example.com/cal.ics"), bot_token="token"
+                make_schedule_body("https://example.com/cal.ics")
             )
         assert "Failed to fetch calendar" in result["body"]["data"]["content"]
 
@@ -142,63 +152,66 @@ class TestScheduleInteraction:
         with patch("bench_boss.bot.WebCalReader") as mock_reader:
             mock_reader.return_value.get_upcoming.return_value = []
             result = handle_interaction(
-                make_schedule_body("https://example.com/cal.ics"), bot_token="token"
+                make_schedule_body("https://example.com/cal.ics")
             )
         assert "No upcoming events" in result["body"]["data"]["content"]
 
-    def test_creates_discord_event_from_next_calendar_event(self):
-        event = make_calendar_event("Team Standup")
-        with (
-            patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.create_scheduled_event") as mock_create,
-        ):
-            mock_reader.return_value.get_upcoming.return_value = [event]
-            mock_create.return_value = {"id": "999", "name": "Team Standup"}
-            result = handle_interaction(
-                make_schedule_body("https://example.com/cal.ics", guild_id="456"),
-                bot_token="token",
-            )
-
-        mock_create.assert_called_once_with(
-            guild_id="456",
-            name="Team Standup",
-            start=event.start,
-            end=event.end,
-            location=event.location,
-            bot_token="token",
-        )
-        assert result["statusCode"] == 200
-
-    def test_success_reply_contains_event_name_and_url(self):
-        event = make_calendar_event("Sprint Review")
-        with (
-            patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.create_scheduled_event") as mock_create,
-        ):
-            mock_reader.return_value.get_upcoming.return_value = [event]
-            mock_create.return_value = {"id": "42", "name": "Sprint Review"}
-            result = handle_interaction(
-                make_schedule_body("https://example.com/cal.ics", guild_id="456"),
-                bot_token="token",
-            )
-
-        content = result["body"]["data"]["content"]
-        assert "Sprint Review" in content
-        assert "https://discord.com/events/456/42" in content
-
-    def test_discord_api_failure_returns_error(self):
+    def test_dynamo_save_failure_returns_error(self):
         event = make_calendar_event()
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.create_scheduled_event") as mock_create,
+            patch("bench_boss.bot.save_event", side_effect=Exception("DynamoDB error")),
         ):
             mock_reader.return_value.get_upcoming.return_value = [event]
-            mock_create.side_effect = Exception("403 Forbidden")
             result = handle_interaction(
-                make_schedule_body("https://example.com/cal.ics"), bot_token="token"
+                make_schedule_body("https://example.com/cal.ics")
+            )
+        assert "Failed to save event" in result["body"]["data"]["content"]
+
+    def test_success_returns_embed_and_components(self):
+        event = make_calendar_event("Team Standup")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event"),
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics")
             )
 
-        assert "Failed to create Discord event" in result["body"]["data"]["content"]
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        data = result["body"]["data"]
+        assert "embeds" in data
+        assert "components" in data
+
+    def test_embed_title_is_event_name(self):
+        event = make_calendar_event("Sprint Review")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event"),
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics")
+            )
+
+        embed = result["body"]["data"]["embeds"][0]
+        assert embed["title"] == "Sprint Review"
+
+    def test_components_have_four_rsvp_buttons(self):
+        event = make_calendar_event()
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event"),
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics")
+            )
+
+        buttons = result["body"]["data"]["components"][0]["components"]
+        assert len(buttons) == 4
 
     def test_only_next_event_is_used(self):
         events = [
@@ -207,15 +220,130 @@ class TestScheduleInteraction:
         ]
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.create_scheduled_event") as mock_create,
+            patch("bench_boss.bot.save_event"),
         ):
             mock_reader.return_value.get_upcoming.return_value = events
-            mock_create.return_value = {"id": "1", "name": "First"}
-            handle_interaction(
-                make_schedule_body("https://example.com/cal.ics"), bot_token="token"
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics")
             )
 
-        assert mock_create.call_args[1]["name"] == "First"
+        embed = result["body"]["data"]["embeds"][0]
+        assert embed["title"] == "First"
+
+    def test_save_event_called_with_event_details(self):
+        event = make_calendar_event("My Event")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            handle_interaction(make_schedule_body("https://example.com/cal.ics"))
+
+        mock_save.assert_called_once()
+        kwargs = mock_save.call_args[1]
+        assert kwargs["name"] == "My Event"
+        assert kwargs["location"] == "Room 1"
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — RSVP button clicks
+# ---------------------------------------------------------------------------
+
+
+def make_stored_event(**overrides) -> dict:
+    base = {
+        "event_key": "test-key",
+        "name": "Team Standup",
+        "start": "2026-04-05T19:00:00+00:00",
+        "end": "2026-04-05T20:00:00+00:00",
+        "accepted": [],
+        "declined": [],
+        "maybe": [],
+        "late": [],
+    }
+    base.update(overrides)
+    return base
+
+
+class TestRsvpInteraction:
+    def test_accept_button_updates_embed(self):
+        updated = make_stored_event(accepted=["user1"])
+        body = make_rsvp_body("rsvp:accepted:test-key", "user1")
+        with patch("bench_boss.bot.update_rsvp", return_value=updated):
+            result = handle_interaction(body)
+
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == UPDATE_MESSAGE
+
+    def test_response_contains_updated_embed_and_components(self):
+        updated = make_stored_event(accepted=["user1"])
+        body = make_rsvp_body("rsvp:accepted:test-key", "user1")
+        with patch("bench_boss.bot.update_rsvp", return_value=updated):
+            result = handle_interaction(body)
+
+        data = result["body"]["data"]
+        assert "embeds" in data
+        assert "components" in data
+
+    def test_embed_shows_rsvp_user_mention(self):
+        updated = make_stored_event(accepted=["user1"])
+        body = make_rsvp_body("rsvp:accepted:test-key", "user1")
+        with patch("bench_boss.bot.update_rsvp", return_value=updated):
+            result = handle_interaction(body)
+
+        fields = result["body"]["data"]["embeds"][0]["fields"]
+        accepted_field = next(f for f in fields if "Accepted" in f["name"])
+        assert "<@user1>" in accepted_field["value"]
+
+    def test_update_rsvp_called_with_correct_args(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(make_rsvp_body("rsvp:maybe:abc-key", "user99"))
+
+        mock_update.assert_called_once_with("abc-key", "user99", "maybe")
+
+    def test_event_not_found_returns_error_message(self):
+        with patch("bench_boss.bot.update_rsvp", side_effect=ValueError("not found")):
+            result = handle_interaction(make_rsvp_body("rsvp:accepted:bad-key"))
+
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "not found" in result["body"]["data"]["content"].lower()
+
+    def test_dynamo_error_returns_error_message(self):
+        with patch("bench_boss.bot.update_rsvp", side_effect=Exception("DB error")):
+            result = handle_interaction(make_rsvp_body("rsvp:accepted:key1"))
+
+        assert "Failed to update RSVP" in result["body"]["data"]["content"]
+
+    def test_invalid_custom_id_returns_400(self):
+        result = handle_interaction(
+            {"type": MESSAGE_COMPONENT, "data": {"custom_id": "garbage"}}
+        )
+        assert result["statusCode"] == 400
+
+    def test_user_id_from_member_when_in_guild(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"user": {"id": "guild-user"}},
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "guild-user", "accepted")
+
+    def test_user_id_from_user_when_in_dm(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "user": {"id": "dm-user"},
+                    "data": {"custom_id": "rsvp:declined:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "dm-user", "declined")
 
 
 # ---------------------------------------------------------------------------

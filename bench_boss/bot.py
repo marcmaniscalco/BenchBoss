@@ -2,19 +2,25 @@
 Core bot logic — shared between local dev server and Lambda.
 """
 
+import uuid
+from datetime import UTC, datetime
+
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.discord_api import create_scheduled_event
+from bench_boss.discord_api import build_event_embed, build_rsvp_components
+from bench_boss.dynamo import save_event, update_rsvp
 
 # Interaction types
 PING = 1
 APPLICATION_COMMAND = 2
+MESSAGE_COMPONENT = 3
 
 # Response types
 PONG = 1
 CHANNEL_MESSAGE_WITH_SOURCE = 4
+UPDATE_MESSAGE = 7
 
 
 def verify_signature(
@@ -52,8 +58,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             options = {
                 o["name"]: o["value"] for o in body.get("data", {}).get("options", [])
             }
-            guild_id = body.get("guild_id", "")
-            return _handle_schedule(options.get("url", ""), guild_id, bot_token)
+            return _handle_schedule(options.get("url", ""))
 
         return {
             "statusCode": 200,
@@ -63,10 +68,19 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             },
         }
 
+    if interaction_type == MESSAGE_COMPONENT:
+        return _handle_rsvp(body)
+
     return {"statusCode": 400, "body": {"error": "Unhandled interaction type"}}
 
 
-def _handle_schedule(webcal_url: str, guild_id: str, bot_token: str) -> dict:
+def _ensure_utc_iso(dt: datetime) -> str:
+    if not dt.tzinfo:
+        return dt.replace(tzinfo=UTC).isoformat()
+    return dt.isoformat()
+
+
+def _handle_schedule(webcal_url: str) -> dict:
     if not webcal_url:
         return _message("No calendar URL provided.")
 
@@ -78,22 +92,83 @@ def _handle_schedule(webcal_url: str, guild_id: str, bot_token: str) -> dict:
     if not events:
         return _message("No upcoming events found in the calendar.")
 
-    next_event = events[0]
+    ev = events[0]
+    event_key = str(uuid.uuid4())
 
     try:
-        created = create_scheduled_event(
-            guild_id=guild_id,
-            name=next_event.summary,
-            start=next_event.start,
-            end=next_event.end,
-            location=next_event.location,
-            bot_token=bot_token,
+        save_event(
+            event_key=event_key,
+            name=ev.summary,
+            start=_ensure_utc_iso(ev.start),
+            end=_ensure_utc_iso(ev.end) if ev.end else None,
+            location=ev.location,
+            description=ev.description,
         )
     except Exception as e:
-        return _message(f"Failed to create Discord event: {e}")
+        return _message(f"Failed to save event: {e}")
 
-    event_url = f"https://discord.com/events/{guild_id}/{created['id']}"
-    return _message(f"Created event **{created['name']}** — {event_url}")
+    embed = build_event_embed(
+        name=ev.summary,
+        start=ev.start,
+        end=ev.end,
+        location=ev.location,
+        description=ev.description,
+        accepted=[],
+        declined=[],
+        maybe=[],
+        late=[],
+    )
+    components = build_rsvp_components(event_key)
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {"embeds": [embed], "components": components},
+        },
+    }
+
+
+def _handle_rsvp(body: dict) -> dict:
+    custom_id = body.get("data", {}).get("custom_id", "")
+    parts = custom_id.split(":")
+    if len(parts) != 3 or parts[0] != "rsvp":
+        return {"statusCode": 400, "body": {"error": "Invalid component ID"}}
+
+    _, action, event_key = parts
+    member = body.get("member") or {}
+    user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
+
+    try:
+        event = update_rsvp(event_key, user_id, action)
+    except ValueError:
+        return _message("Event not found.")
+    except Exception as e:
+        return _message(f"Failed to update RSVP: {e}")
+
+    start = datetime.fromisoformat(event["start"])
+    end = datetime.fromisoformat(event["end"]) if event.get("end") else None
+
+    embed = build_event_embed(
+        name=event["name"],
+        start=start,
+        end=end,
+        location=event.get("location"),
+        description=event.get("description"),
+        accepted=event.get("accepted", []),
+        declined=event.get("declined", []),
+        maybe=event.get("maybe", []),
+        late=event.get("late", []),
+    )
+    components = build_rsvp_components(event_key)
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": UPDATE_MESSAGE,
+            "data": {"embeds": [embed], "components": components},
+        },
+    }
 
 
 def _message(content: str) -> dict:

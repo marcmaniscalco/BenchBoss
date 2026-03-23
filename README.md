@@ -38,6 +38,19 @@ Verify:
 python --version
 ```
 
+### AWS CLI
+
+Required for creating the local DynamoDB table (Part 3.2) and deploying to AWS (Part 6).
+
+```powershell
+winget install Amazon.AWSCLI
+```
+
+Verify:
+```powershell
+aws --version
+```
+
 ### ngrok
 
 1. Download from https://ngrok.com/download (Windows 64-bit)
@@ -96,7 +109,66 @@ pipenv install --dev
 
 This installs all packages from `Pipfile` (including dev dependencies like pytest) and generates `Pipfile.lock`.
 
-### 3.2 Lint and format
+### 3.2 Set up DynamoDB Local
+
+The bot stores RSVP state in DynamoDB. For local development you run DynamoDB on your machine instead of connecting to AWS.
+
+#### Docker (recommended)
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+2. Start DynamoDB Local:
+
+```powershell
+docker run -d --name dynamodb-local -p 8000:8000 amazon/dynamodb-local
+```
+
+Verify it is running:
+
+```powershell
+docker ps
+```
+
+Stop/start it later with:
+```powershell
+docker stop dynamodb-local
+docker start dynamodb-local
+```
+
+---
+
+#### Create the table
+
+Once DynamoDB Local is running, create the events table. The AWS CLI sends the request to `localhost:8000` — credentials can be any non-empty string for local use:
+
+```powershell
+$env:AWS_ACCESS_KEY_ID     = "local"
+$env:AWS_SECRET_ACCESS_KEY = "local"
+$env:AWS_DEFAULT_REGION    = "us-east-1"
+
+aws dynamodb create-table `
+  --table-name bench-boss-events `
+  --attribute-definitions AttributeName=event_key,AttributeType=S `
+  --key-schema AttributeName=event_key,KeyType=HASH `
+  --billing-mode PAY_PER_REQUEST `
+  --endpoint-url http://localhost:8000
+```
+
+Verify the table was created:
+
+```powershell
+aws dynamodb list-tables --endpoint-url http://localhost:8000
+```
+
+Expected output:
+```json
+{
+    "TableNames": ["bench-boss-events"]
+}
+```
+
+> You only need to run `create-table` once. The table persists between restarts when using the Docker container.
+
+### 3.3 Lint and format
 
 This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting.
 
@@ -115,7 +187,7 @@ Format code:
 pipenv run ruff format bench_boss/ tests/
 ```
 
-### 3.3 Run unit tests
+### 3.4 Run unit tests
 
 ```powershell
 pipenv run pytest tests/ -v
@@ -130,7 +202,7 @@ pipenv run pytest tests/ -v --cov=bench_boss --cov-report=term-missing
 `--cov=bench_boss` measures coverage for the `bench_boss` package only.
 `--cov-report=term-missing` prints which lines are not covered.
 
-### 3.3 Register slash commands with Discord
+### 3.5 Register slash commands with Discord
 
 Run this once (and again whenever you add or change commands):
 
@@ -159,12 +231,22 @@ Registered 2 command(s):
 
 ### 4.1 Start the local server
 
-Open a PowerShell window:
+Open a PowerShell window. You need four env vars — the Discord credentials plus the DynamoDB table name and a fake AWS region (boto3 requires one even for local endpoints):
 
 ```powershell
-$env:DISCORD_PUBLIC_KEY = "<your-public-key>"
+$env:DISCORD_PUBLIC_KEY     = "<your-public-key>"
+$env:DISCORD_TOKEN          = "<your-bot-token>"
+$env:DYNAMODB_TABLE         = "bench-boss-events"
+$env:AWS_ENDPOINT_URL       = "http://localhost:8000"
+$env:AWS_ACCESS_KEY_ID      = "local"
+$env:AWS_SECRET_ACCESS_KEY  = "local"
+$env:AWS_DEFAULT_REGION     = "us-east-1"
 pipenv run python local_server.py
 ```
+
+`AWS_ENDPOINT_URL` tells boto3 to send all AWS requests to DynamoDB Local instead of the real AWS endpoint. The `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values can be any non-empty string — DynamoDB Local does not validate credentials.
+
+> Make sure DynamoDB Local is running (Part 3.2) before starting the server.
 
 You should see:
 ```

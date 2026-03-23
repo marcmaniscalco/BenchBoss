@@ -1,169 +1,158 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
 
-import pytest
-import requests
+from bench_boss.discord_api import BLURPLE, build_event_embed, build_rsvp_components
 
-from bench_boss.discord_api import EXTERNAL, GUILD_ONLY, create_scheduled_event
-
-GUILD_ID = "123456789"
-BOT_TOKEN = "test-token"
-BASE_URL = f"https://discord.com/api/v10/guilds/{GUILD_ID}/scheduled-events"
+START = datetime(2026, 4, 5, 19, 0, tzinfo=UTC)
+END = START + timedelta(hours=1)
 
 
-def make_start(offset_hours: int = 2) -> datetime:
-    return datetime.now(tz=UTC) + timedelta(hours=offset_hours)
+# ---------------------------------------------------------------------------
+# build_event_embed
+# ---------------------------------------------------------------------------
 
 
-def mock_post(response_json: dict, status_code: int = 200):
-    mock_response = MagicMock()
-    mock_response.json.return_value = response_json
-    mock_response.status_code = status_code
-    if status_code >= 400:
-        mock_response.raise_for_status.side_effect = requests.HTTPError(
-            response=mock_response
+class TestBuildEventEmbed:
+    def test_title_is_event_name(self):
+        embed = build_event_embed(
+            "Team Standup", START, None, None, None, [], [], [], []
         )
-    else:
-        mock_response.raise_for_status.return_value = None
-    return patch("bench_boss.discord_api.requests.post", return_value=mock_response)
+        assert embed["title"] == "Team Standup"
+
+    def test_color_is_blurple(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        assert embed["color"] == BLURPLE
+
+    def test_contains_when_field(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert any("📅" in n for n in field_names)
+
+    def test_when_field_contains_date(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        when_field = next(f for f in embed["fields"] if "📅" in f["name"])
+        assert "2026" in when_field["value"]
+        assert "April" in when_field["value"]
+
+    def test_when_field_includes_end_time_when_provided(self):
+        embed = build_event_embed("Event", START, END, None, None, [], [], [], [])
+        when_field = next(f for f in embed["fields"] if "📅" in f["name"])
+        assert "–" in when_field["value"]
+
+    def test_location_field_present_when_provided(self):
+        embed = build_event_embed("Event", START, None, "Room 1", None, [], [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert any("📍" in n for n in field_names)
+
+    def test_location_field_absent_when_none(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert not any("📍" in n for n in field_names)
+
+    def test_location_value_is_shown(self):
+        embed = build_event_embed("Event", START, None, "Room 1", None, [], [], [], [])
+        location_field = next(f for f in embed["fields"] if "📍" in f["name"])
+        assert location_field["value"] == "Room 1"
+
+    def test_description_field_present_when_provided(self):
+        embed = build_event_embed(
+            "Event", START, None, None, "Fun event", [], [], [], []
+        )
+        field_names = [f["name"] for f in embed["fields"]]
+        assert any("📋" in n for n in field_names)
+
+    def test_description_field_absent_when_none(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert not any("📋" in n for n in field_names)
+
+    def test_rsvp_fields_show_zero_counts_when_empty(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert any("Accepted (0)" in n for n in field_names)
+        assert any("Declined (0)" in n for n in field_names)
+        assert any("Maybe (0)" in n for n in field_names)
+        assert any("Late (0)" in n for n in field_names)
+
+    def test_rsvp_field_shows_correct_count(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["u1", "u2"], [], [], []
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "Accepted (2)" in accepted_field["name"]
+
+    def test_rsvp_field_shows_user_mentions(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["user1"], [], [], []
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "<@user1>" in accepted_field["value"]
+
+    def test_rsvp_field_shows_dash_when_empty(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert accepted_field["value"] == "-"
+
+    def test_naive_datetime_is_handled_without_error(self):
+        naive_start = datetime(2026, 4, 5, 19, 0)
+        embed = build_event_embed(
+            "Event", naive_start, None, None, None, [], [], [], []
+        )
+        assert embed["title"] == "Event"
 
 
 # ---------------------------------------------------------------------------
-# Successful creation
+# build_rsvp_components
 # ---------------------------------------------------------------------------
 
 
-class TestCreateScheduledEvent:
-    def test_returns_created_event(self):
-        start = make_start()
-        expected = {"id": "999", "name": "Team Standup"}
-        with mock_post(expected):
-            result = create_scheduled_event(
-                GUILD_ID, "Team Standup", start, None, None, BOT_TOKEN
+class TestBuildRsvpComponents:
+    def test_returns_single_action_row(self):
+        components = build_rsvp_components("key1")
+        assert len(components) == 1
+        assert components[0]["type"] == 1
+
+    def test_has_four_buttons(self):
+        components = build_rsvp_components("key1")
+        assert len(components[0]["components"]) == 4
+
+    def test_all_buttons_are_type_2(self):
+        components = build_rsvp_components("key1")
+        for btn in components[0]["components"]:
+            assert btn["type"] == 2
+
+    def test_custom_ids_contain_event_key(self):
+        components = build_rsvp_components("my-event-key")
+        for btn in components[0]["components"]:
+            assert "my-event-key" in btn["custom_id"]
+
+    def test_custom_id_format_for_all_actions(self):
+        components = build_rsvp_components("key1")
+        custom_ids = {btn["custom_id"] for btn in components[0]["components"]}
+        assert custom_ids == {
+            "rsvp:accepted:key1",
+            "rsvp:declined:key1",
+            "rsvp:maybe:key1",
+            "rsvp:late:key1",
+        }
+
+    def test_accept_button_has_success_style(self):
+        components = build_rsvp_components("key1")
+        btn = next(
+            b for b in components[0]["components"] if "accepted" in b["custom_id"]
+        )
+        assert btn["style"] == 3
+
+    def test_decline_button_has_danger_style(self):
+        components = build_rsvp_components("key1")
+        btn = next(
+            b for b in components[0]["components"] if "declined" in b["custom_id"]
+        )
+        assert btn["style"] == 4
+
+    def test_maybe_and_late_have_secondary_style(self):
+        components = build_rsvp_components("key1")
+        for action in ("maybe", "late"):
+            btn = next(
+                b for b in components[0]["components"] if action in b["custom_id"]
             )
-        assert result == expected
-
-    def test_posts_to_correct_url(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-        mock.assert_called_once()
-        assert mock.call_args[0][0] == BASE_URL
-
-    def test_sends_bot_token_header(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-        headers = mock.call_args[1]["headers"]
-        assert headers["Authorization"] == f"Bot {BOT_TOKEN}"
-
-    def test_payload_entity_type_is_external(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        assert payload["entity_type"] == EXTERNAL
-
-    def test_payload_privacy_level_is_guild_only(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        assert payload["privacy_level"] == GUILD_ONLY
-
-    def test_payload_contains_name(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "My Event", start, None, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        assert payload["name"] == "My Event"
-
-    def test_payload_location_uses_provided_value(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, "Room 1", BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        assert payload["entity_metadata"]["location"] == "Room 1"
-
-    def test_payload_location_defaults_to_tbd_when_none(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        assert payload["entity_metadata"]["location"] == "TBD"
-
-
-# ---------------------------------------------------------------------------
-# End time handling
-# ---------------------------------------------------------------------------
-
-
-class TestEndTime:
-    def test_end_defaults_to_one_hour_after_start_when_none(self):
-        start = make_start()
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        start_dt = datetime.fromisoformat(payload["scheduled_start_time"])
-        end_dt = datetime.fromisoformat(payload["scheduled_end_time"])
-        assert end_dt - start_dt == timedelta(hours=1)
-
-    def test_provided_end_time_is_used(self):
-        start = make_start()
-        end = start + timedelta(hours=3)
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, end, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        end_dt = datetime.fromisoformat(payload["scheduled_end_time"])
-        start_dt = datetime.fromisoformat(payload["scheduled_start_time"])
-        assert end_dt - start_dt == timedelta(hours=3)
-
-
-# ---------------------------------------------------------------------------
-# Timezone handling
-# ---------------------------------------------------------------------------
-
-
-class TestTimezone:
-    def test_naive_start_gets_utc_tzinfo(self):
-        naive_start = datetime(2026, 6, 1, 9, 0)
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(
-                GUILD_ID, "Event", naive_start, None, None, BOT_TOKEN
-            )
-        payload = mock.call_args[1]["json"]
-        ts = payload["scheduled_start_time"]
-        assert "+00:00" in ts or "Z" in ts or "UTC" in ts or ts.endswith("+00:00")
-
-    def test_naive_end_gets_utc_tzinfo(self):
-        start = make_start()
-        naive_end = datetime(2026, 6, 1, 10, 0)
-        with mock_post({"id": "1"}) as mock:
-            create_scheduled_event(GUILD_ID, "Event", start, naive_end, None, BOT_TOKEN)
-        payload = mock.call_args[1]["json"]
-        assert "scheduled_end_time" in payload
-
-
-# ---------------------------------------------------------------------------
-# HTTP errors
-# ---------------------------------------------------------------------------
-
-
-class TestHttpErrors:
-    def test_raises_on_403(self):
-        start = make_start()
-        with mock_post({}, status_code=403):
-            with pytest.raises(requests.HTTPError):
-                create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-
-    def test_raises_on_401(self):
-        start = make_start()
-        with mock_post({}, status_code=401):
-            with pytest.raises(requests.HTTPError):
-                create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
-
-    def test_raises_on_500(self):
-        start = make_start()
-        with mock_post({}, status_code=500):
-            with pytest.raises(requests.HTTPError):
-                create_scheduled_event(GUILD_ID, "Event", start, None, None, BOT_TOKEN)
+            assert btn["style"] == 2

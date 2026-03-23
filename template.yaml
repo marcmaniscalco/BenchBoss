@@ -18,15 +18,30 @@ Parameters:
     NoEcho: true
 
 Resources:
+  BenchBossTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: event_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: event_key
+          KeyType: HASH
+
   BenchBossFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
       Handler: lambda_function.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BenchBossTable
       Environment:
         Variables:
           DISCORD_PUBLIC_KEY: !Ref DiscordPublicKey
           DISCORD_TOKEN: !Ref DiscordToken
+          DYNAMODB_TABLE: !Ref BenchBossTable
       Events:
         Interactions:
           Type: Api

@@ -4,15 +4,16 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-PyNaCl = "==1.5.0"
-flask = "==3.1.0"
-requests = "==2.32.3"
-icalendar = "==6.1.3"
+PyNaCl = "~=1.5.0"
+flask = "~=3.1.0"
+requests = "~=2.32.3"
+icalendar = "~=6.1.3"
+boto3 = "~=1.42.74"
 
 [dev-packages]
-pytest = "==8.3.5"
-pytest-cov = "==6.1.0"
-ruff = "*"
+pytest = "~=8.3.5"
+pytest-cov = "~=6.1.0"
+ruff = "~=0.15.7"
 
 [requires]
 python_version = "3.13"
