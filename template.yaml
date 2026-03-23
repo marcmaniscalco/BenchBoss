@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: BenchBoss — Serverless Discord Bot
+
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: python3.13
+
+Parameters:
+  DiscordPublicKey:
+    Type: String
+    Description: "Discord app public key (Developer Portal > General Information)"
+    NoEcho: true
+  DiscordToken:
+    Type: String
+    Description: "Discord bot token (Developer Portal > Bot > Token)"
+    NoEcho: true
+
+Resources:
+  BenchBossFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_function.lambda_handler
+      Environment:
+        Variables:
+          DISCORD_PUBLIC_KEY: !Ref DiscordPublicKey
+          DISCORD_TOKEN: !Ref DiscordToken
+      Events:
+        Interactions:
+          Type: Api
+          Properties:
+            Path: /interactions
+            Method: POST
+
+Outputs:
+  InteractionsUrl:
+    Description: "Paste into Discord Developer Portal > General Information > Interactions Endpoint URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/interactions"
