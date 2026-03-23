@@ -55,10 +55,17 @@ class TestBuildEventEmbed:
 
     def test_description_field_present_when_provided(self):
         embed = build_event_embed(
-            "Event", START, None, None, "Fun event", [], [], [], []
+            "Event", START, None, None, "https://example.com/game", [], [], [], []
         )
         field_names = [f["name"] for f in embed["fields"]]
         assert any("📋" in n for n in field_names)
+
+    def test_description_renders_as_game_details_link(self):
+        embed = build_event_embed(
+            "Event", START, None, None, "https://example.com/game", [], [], [], []
+        )
+        details_field = next(f for f in embed["fields"] if "📋" in f["name"])
+        assert details_field["value"] == "[Game Details](https://example.com/game)"
 
     def test_description_field_absent_when_none(self):
         embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
@@ -111,9 +118,9 @@ class TestBuildRsvpComponents:
         assert len(components) == 1
         assert components[0]["type"] == 1
 
-    def test_has_four_buttons(self):
+    def test_has_five_buttons(self):
         components = build_rsvp_components("key1")
-        assert len(components[0]["components"]) == 4
+        assert len(components[0]["components"]) == 5
 
     def test_all_buttons_are_type_2(self):
         components = build_rsvp_components("key1")
@@ -133,7 +140,28 @@ class TestBuildRsvpComponents:
             "rsvp:declined:key1",
             "rsvp:maybe:key1",
             "rsvp:late:key1",
+            "delete:key1",
         }
+
+    def test_delete_button_has_danger_style(self):
+        components = build_rsvp_components("key1")
+        delete_btn = next(
+            b for b in components[0]["components"] if b["custom_id"] == "delete:key1"
+        )
+        assert delete_btn["style"] == 4
+
+    def test_delete_button_label_is_delete(self):
+        components = build_rsvp_components("key1")
+        delete_btn = next(
+            b for b in components[0]["components"] if b["custom_id"] == "delete:key1"
+        )
+        assert delete_btn["label"] == "🗑️ Delete"
+
+    def test_rsvp_buttons_have_icon_only_labels(self):
+        components = build_rsvp_components("key1")
+        rsvp_btns = [b for b in components[0]["components"] if b["custom_id"].startswith("rsvp:")]
+        for btn in rsvp_btns:
+            assert btn["label"] in {"✅", "❌", "❓", "🕐"}
 
     def test_accept_button_has_success_style(self):
         components = build_rsvp_components("key1")

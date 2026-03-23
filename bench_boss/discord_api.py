@@ -11,6 +11,13 @@ _RSVP_LABELS = {
     "late": "🕐 Late",
 }
 
+_RSVP_ICONS = {
+    "accepted": "✅",
+    "declined": "❌",
+    "maybe": "❓",
+    "late": "🕐",
+}
+
 # Discord button styles: 3=SUCCESS (green), 4=DANGER (red), 2=SECONDARY (gray)
 _RSVP_STYLES = {
     "accepted": 3,
@@ -67,7 +74,13 @@ def build_event_embed(
     if location:
         fields.append({"name": "📍 Where", "value": location, "inline": False})
     if description:
-        fields.append({"name": "📋 Details", "value": description, "inline": False})
+        fields.append(
+            {
+                "name": "📋 Details",
+                "value": f"[Game Details]({description})",
+                "inline": False,
+            }
+        )
 
     # Blank separator before RSVP section
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
@@ -88,7 +101,7 @@ def build_event_embed(
 
 
 def build_rsvp_components(event_key: str) -> list[dict]:
-    """Return a single action row of four RSVP buttons."""
+    """Return a single action row of RSVP buttons and a delete button."""
     buttons = [
         {
             "type": 2,  # BUTTON
@@ -96,6 +109,14 @@ def build_rsvp_components(event_key: str) -> list[dict]:
             "label": label,
             "custom_id": f"rsvp:{action}:{event_key}",
         }
-        for action, label in _RSVP_LABELS.items()
+        for action, label in _RSVP_ICONS.items()
     ]
+    buttons.append(
+        {
+            "type": 2,
+            "style": 4,  # DANGER (red)
+            "label": "🗑️ Delete",
+            "custom_id": f"delete:{event_key}",
+        }
+    )
     return [{"type": 1, "components": buttons}]  # ACTION_ROW

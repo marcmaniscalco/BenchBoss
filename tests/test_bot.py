@@ -199,7 +199,7 @@ class TestScheduleInteraction:
         embed = result["body"]["data"]["embeds"][0]
         assert embed["title"] == "Sprint Review"
 
-    def test_components_have_four_rsvp_buttons(self):
+    def test_components_have_five_buttons(self):
         event = make_calendar_event()
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
@@ -211,7 +211,7 @@ class TestScheduleInteraction:
             )
 
         buttons = result["body"]["data"]["components"][0]["components"]
-        assert len(buttons) == 4
+        assert len(buttons) == 5
 
     def test_only_next_event_is_used(self):
         events = [
@@ -344,6 +344,66 @@ class TestRsvpInteraction:
                 }
             )
         mock_update.assert_called_once_with("key1", "dm-user", "declined")
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — delete button
+# ---------------------------------------------------------------------------
+
+
+def make_delete_body(event_key: str, channel_id: str = "ch1", message_id: str = "msg1") -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "channel_id": channel_id,
+        "message": {"id": message_id},
+        "member": {"user": {"id": "user1"}},
+        "data": {"custom_id": f"delete:{event_key}"},
+    }
+
+
+class TestDeleteInteraction:
+    def test_delete_calls_delete_event(self):
+        with (
+            patch("bench_boss.bot.delete_event") as mock_delete,
+            patch("bench_boss.bot.requests.delete"),
+        ):
+            handle_interaction(make_delete_body("key1"), bot_token="tok")
+        mock_delete.assert_called_once_with("key1")
+
+    def test_delete_makes_discord_api_call(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.requests.delete") as mock_req,
+        ):
+            handle_interaction(make_delete_body("key1", "ch99", "msg42"), bot_token="mytoken")
+        mock_req.assert_called_once()
+        call_args = mock_req.call_args
+        assert "ch99" in call_args[0][0]
+        assert "msg42" in call_args[0][0]
+        assert call_args[1]["headers"]["Authorization"] == "Bot mytoken"
+
+    def test_delete_returns_ephemeral_confirmation(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.requests.delete"),
+        ):
+            result = handle_interaction(make_delete_body("key1"), bot_token="tok")
+        assert result["statusCode"] == 200
+        assert result["body"]["data"]["content"] == "Event deleted."
+        assert result["body"]["data"]["flags"] == 64
+
+    def test_delete_skips_discord_call_when_no_token(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.requests.delete") as mock_req,
+        ):
+            handle_interaction(make_delete_body("key1"))
+        mock_req.assert_not_called()
+
+    def test_delete_event_failure_returns_error(self):
+        with patch("bench_boss.bot.delete_event", side_effect=Exception("DB error")):
+            result = handle_interaction(make_delete_body("key1"), bot_token="tok")
+        assert "Failed to delete event" in result["body"]["data"]["content"]
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,11 @@ def save_event(
     _table().put_item(Item=item)
 
 
+def delete_event(event_key: str) -> None:
+    """Delete an event and all its RSVP data."""
+    _table().delete_item(Key={"event_key": event_key})
+
+
 def get_event(event_key: str) -> dict | None:
     """Return the event item or None if not found."""
     response = _table().get_item(Key={"event_key": event_key})

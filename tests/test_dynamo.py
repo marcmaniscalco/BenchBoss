@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bench_boss.dynamo import get_event, save_event, update_rsvp
+from bench_boss.dynamo import delete_event, get_event, save_event, update_rsvp
 
 
 @pytest.fixture()
@@ -57,6 +57,17 @@ class TestSaveEvent:
         assert item["end"] == END
         assert item["location"] == "Room 1"
         assert item["description"] == "Fun event"
+
+
+# ---------------------------------------------------------------------------
+# delete_event
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteEvent:
+    def test_calls_delete_item_with_event_key(self, mock_table):
+        delete_event("key1")
+        mock_table.delete_item.assert_called_once_with(Key={"event_key": "key1"})
 
 
 # ---------------------------------------------------------------------------

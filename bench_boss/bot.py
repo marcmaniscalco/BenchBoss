@@ -5,12 +5,13 @@ Core bot logic — shared between local dev server and Lambda.
 import uuid
 from datetime import UTC, datetime
 
+import requests
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
 from bench_boss.discord_api import build_event_embed, build_rsvp_components
-from bench_boss.dynamo import save_event, update_rsvp
+from bench_boss.dynamo import delete_event, save_event, update_rsvp
 
 # Interaction types
 PING = 1
@@ -69,6 +70,9 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
         }
 
     if interaction_type == MESSAGE_COMPONENT:
+        custom_id = body.get("data", {}).get("custom_id", "")
+        if custom_id.startswith("delete:"):
+            return _handle_delete(body, bot_token)
         return _handle_rsvp(body)
 
     return {"statusCode": 400, "body": {"error": "Unhandled interaction type"}}
@@ -167,6 +171,32 @@ def _handle_rsvp(body: dict) -> dict:
         "body": {
             "type": UPDATE_MESSAGE,
             "data": {"embeds": [embed], "components": components},
+        },
+    }
+
+
+def _handle_delete(body: dict, bot_token: str) -> dict:
+    custom_id = body.get("data", {}).get("custom_id", "")
+    event_key = custom_id.split(":", 1)[1]
+
+    try:
+        delete_event(event_key)
+    except Exception as e:
+        return _message(f"Failed to delete event: {e}")
+
+    channel_id = body.get("channel_id", "")
+    message_id = body.get("message", {}).get("id", "")
+    if channel_id and message_id and bot_token:
+        requests.delete(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
+            headers={"Authorization": f"Bot {bot_token}"},
+        )
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {"content": "Event deleted.", "flags": 64},
         },
     }
 
