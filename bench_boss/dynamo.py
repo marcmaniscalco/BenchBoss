@@ -1,6 +1,7 @@
 """DynamoDB persistence for event RSVP state."""
 
 import os
+from datetime import UTC, datetime, timedelta
 
 import boto3
 
@@ -15,6 +16,14 @@ def _table():
     return boto3.resource("dynamodb", region_name="us-east-1", **kwargs).Table(
         os.environ["DYNAMODB_TABLE"]
     )
+
+
+def _ttl_timestamp(end: str | None, start: str) -> int:
+    """Return a Unix timestamp 24 hours after end (or start if no end)."""
+    base = datetime.fromisoformat(end if end else start)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=UTC)
+    return int((base + timedelta(hours=24)).timestamp())
 
 
 def save_event(
@@ -33,6 +42,7 @@ def save_event(
         "accepted": [],
         "declined": [],
         "tentative": [],
+        "ttl": _ttl_timestamp(end, start),
     }
     if end is not None:
         item["end"] = end

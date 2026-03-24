@@ -28,4 +28,8 @@ else:
         KeySchema=[{"AttributeName": "event_key", "KeyType": "HASH"}],
         BillingMode="PAY_PER_REQUEST",
     )
+    client.update_time_to_live(
+        TableName=TABLE_NAME,
+        TimeToLiveSpecification={"AttributeName": "ttl", "Enabled": True},
+    )
     print(f"Table '{TABLE_NAME}' created.")

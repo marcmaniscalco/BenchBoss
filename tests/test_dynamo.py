@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bench_boss.dynamo import delete_event, get_event, save_event, update_rsvp
+from bench_boss.dynamo import _ttl_timestamp, delete_event, get_event, save_event, update_rsvp
 
 
 @pytest.fixture()
@@ -49,6 +49,22 @@ class TestSaveEvent:
         assert "end" not in item
         assert "location" not in item
         assert "description" not in item
+
+    def test_stores_ttl_field(self, mock_table):
+        save_event("key1", "My Event", START, END, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "ttl" in item
+        assert isinstance(item["ttl"], int)
+
+    def test_ttl_is_24h_after_end(self, mock_table):
+        save_event("key1", "My Event", START, END, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["ttl"] == _ttl_timestamp(END, START)
+
+    def test_ttl_falls_back_to_start_when_no_end(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["ttl"] == _ttl_timestamp(None, START)
 
     def test_stores_optional_fields_when_provided(self, mock_table):
         save_event("key1", "My Event", START, END, "Room 1", "Fun event")

@@ -28,6 +28,9 @@ Resources:
       KeySchema:
         - AttributeName: event_key
           KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
   BenchBossFunction:
     Type: AWS::Serverless::Function
