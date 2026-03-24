@@ -99,7 +99,7 @@ On the **General Information** tab, copy and save:
 
 ```powershell
 pip install pipenv
-pipenv install --dev
+make install
 ```
 
 This installs all packages from `Pipfile` (including dev dependencies like pytest) and generates `Pipfile.lock`.
@@ -114,7 +114,7 @@ The bot stores RSVP state in DynamoDB. For local development, `docker-compose` s
 2. From the project root:
 
 ```powershell
-docker-compose -f local/docker-compose.yml up -d
+make dynamo-up
 ```
 
 This starts two containers:
@@ -132,8 +132,8 @@ docker ps
 
 Stop/start later with:
 ```powershell
-docker-compose -f local/docker-compose.yml stop
-docker-compose -f local/docker-compose.yml start
+make dynamo-down
+make dynamo-up
 ```
 
 #### Create the table (once)
@@ -141,9 +141,7 @@ docker-compose -f local/docker-compose.yml start
 Run this once after the containers are up for the first time:
 
 ```powershell
-$env:AWS_ACCESS_KEY_ID     = "local"
-$env:AWS_SECRET_ACCESS_KEY = "local"
-pipenv run python local/create_local_table.py
+make dynamo-init
 ```
 
 #### View and edit data
@@ -158,29 +156,29 @@ This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formattin
 
 Check for lint errors:
 ```powershell
-pipenv run ruff check bench_boss/ tests/
+make lint
 ```
 
 Auto-fix lint errors:
 ```powershell
-pipenv run ruff check --fix bench_boss/ tests/
+make lint-fix
 ```
 
 Format code:
 ```powershell
-pipenv run ruff format bench_boss/ tests/
+make format
 ```
 
 ### 3.4 Run unit tests
 
 ```powershell
-pipenv run pytest tests/ -v
+make test
 ```
 
 Run with coverage:
 
 ```powershell
-pipenv run pytest tests/ -v --cov=bench_boss --cov-report=term-missing
+make cov
 ```
 
 `--cov=bench_boss` measures coverage for the `bench_boss` package only.
@@ -196,7 +194,7 @@ Commands are registered as guild (server-specific) commands for instant availabi
 $env:DISCORD_TOKEN  = "<your-bot-token>"
 $env:DISCORD_APP_ID = "<your-application-id>"
 $env:GUILD_ID       = "<your-server-id>"
-pipenv run python register_commands.py
+make register
 ```
 
 > Your Guild ID is found in Discord by right-clicking your server → **Copy Server ID**
@@ -218,16 +216,12 @@ Registered 2 command(s):
 Open a PowerShell window. You need four env vars — the Discord credentials plus the DynamoDB table name and a fake AWS region (boto3 requires one even for local endpoints):
 
 ```powershell
-$env:DISCORD_PUBLIC_KEY     = "<your-public-key>"
-$env:DISCORD_TOKEN          = "<your-bot-token>"
-$env:DYNAMODB_TABLE         = "bench-boss-local"
-$env:DYNAMODB_ENDPOINT      = "http://localhost:8000"
-$env:AWS_ACCESS_KEY_ID      = "local"
-$env:AWS_SECRET_ACCESS_KEY  = "local"
-pipenv run python local/local_server.py
+$env:DISCORD_PUBLIC_KEY = "<your-public-key>"
+$env:DISCORD_TOKEN      = "<your-bot-token>"
+make local
 ```
 
-`DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS. The `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values can be any non-empty string — DynamoDB Local does not validate credentials.
+`make local` sets `DYNAMODB_TABLE`, `DYNAMODB_ENDPOINT`, and fake AWS credentials automatically. You only need to supply the two Discord env vars. `DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS.
 
 > Make sure DynamoDB Local is running (Part 3.2) before starting the server.
 
@@ -284,8 +278,8 @@ Go to your server and type `/ping`. The bot will reply **Pong!**
    ```python
    {"name": "hello", "description": "Say hello."}
    ```
-3. Run `pipenv run python register_commands.py` again
-4. Restart `local/local_server.py`
+3. Run `make register` again
+4. Restart with `make local`
 
 ---
 
@@ -312,8 +306,7 @@ aws s3 mb s3://<your-unique-bucket-name>
 ### 6.3 Deploy
 
 ```powershell
-sam build
-sam deploy --guided
+make deploy
 ```
 
 Follow the prompts. When asked for `DiscordPublicKey`, paste your public key.
