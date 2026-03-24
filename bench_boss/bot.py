@@ -2,6 +2,8 @@
 Core bot logic — shared between local dev server and Lambda.
 """
 
+import threading
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -21,6 +23,7 @@ MESSAGE_COMPONENT = 3
 # Response types
 PONG = 1
 CHANNEL_MESSAGE_WITH_SOURCE = 4
+DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7
 
 
@@ -120,7 +123,6 @@ def _handle_schedule(webcal_url: str) -> dict:
         accepted=[],
         declined=[],
         tentative=[],
-        late=[],
     )
     components = build_rsvp_components(event_key)
 
@@ -162,7 +164,6 @@ def _handle_rsvp(body: dict) -> dict:
         accepted=event.get("accepted", []),
         declined=event.get("declined", []),
         tentative=event.get("tentative", []),
-        late=event.get("late", []),
     )
     components = build_rsvp_components(event_key)
 
@@ -184,21 +185,26 @@ def _handle_delete(body: dict, bot_token: str) -> dict:
     except Exception as e:
         return _message(f"Failed to delete event: {e}")
 
-    channel_id = body.get("channel_id", "")
-    message_id = body.get("message", {}).get("id", "")
-    if channel_id and message_id and bot_token:
-        requests.delete(
-            f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
-            headers={"Authorization": f"Bot {bot_token}"},
-        )
+    app_id = body.get("application_id", "")
+    token = body.get("token", "")
+    if app_id and token:
+        threading.Thread(
+            target=_delete_original_message,
+            args=(app_id, token),
+            daemon=True,
+        ).start()
 
-    return {
-        "statusCode": 200,
-        "body": {
-            "type": CHANNEL_MESSAGE_WITH_SOURCE,
-            "data": {"content": "Event deleted.", "flags": 64},
-        },
-    }
+    # Acknowledge the interaction immediately (type 6 = DEFERRED_UPDATE_MESSAGE).
+    # The background thread deletes the message after the callback is sent.
+    return {"statusCode": 200, "body": {"type": DEFERRED_UPDATE_MESSAGE}}
+
+
+def _delete_original_message(app_id: str, token: str) -> None:
+    """Delete the original event message after the interaction callback has been sent."""
+    time.sleep(0.5)
+    requests.delete(
+        f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
+    )
 
 
 def _message(content: str) -> dict:

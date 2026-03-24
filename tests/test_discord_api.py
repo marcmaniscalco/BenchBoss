@@ -14,95 +14,94 @@ END = START + timedelta(hours=1)
 class TestBuildEventEmbed:
     def test_title_is_event_name(self):
         embed = build_event_embed(
-            "Team Standup", START, None, None, None, [], [], [], []
+            "Team Standup", START, None, None, None, [], [], []
         )
         assert embed["title"] == "Team Standup"
 
     def test_color_is_blurple(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         assert embed["color"] == BLURPLE
 
     def test_contains_when_field(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
         assert any("📅" in n for n in field_names)
 
     def test_when_field_contains_date(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         when_field = next(f for f in embed["fields"] if "📅" in f["name"])
         assert "2026" in when_field["value"]
         assert "April" in when_field["value"]
 
     def test_when_field_includes_end_time_when_provided(self):
-        embed = build_event_embed("Event", START, END, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, END, None, None, [], [], [])
         when_field = next(f for f in embed["fields"] if "📅" in f["name"])
         assert "–" in when_field["value"]
 
     def test_location_field_present_when_provided(self):
-        embed = build_event_embed("Event", START, None, "Room 1", None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, "Room 1", None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
         assert any("📍" in n for n in field_names)
 
     def test_location_field_absent_when_none(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
         assert not any("📍" in n for n in field_names)
 
     def test_location_value_is_shown(self):
-        embed = build_event_embed("Event", START, None, "Room 1", None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, "Room 1", None, [], [], [])
         location_field = next(f for f in embed["fields"] if "📍" in f["name"])
         assert location_field["value"] == "Room 1"
 
     def test_description_field_present_when_provided(self):
         embed = build_event_embed(
-            "Event", START, None, None, "https://example.com/game", [], [], [], []
+            "Event", START, None, None, "https://example.com/game", [], [], []
         )
         field_names = [f["name"] for f in embed["fields"]]
         assert any("📋" in n for n in field_names)
 
     def test_description_renders_as_game_details_link(self):
         embed = build_event_embed(
-            "Event", START, None, None, "https://example.com/game", [], [], [], []
+            "Event", START, None, None, "https://example.com/game", [], [], []
         )
         details_field = next(f for f in embed["fields"] if "📋" in f["name"])
         assert details_field["value"] == "[Game Details](https://example.com/game)"
 
     def test_description_field_absent_when_none(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
         assert not any("📋" in n for n in field_names)
 
     def test_rsvp_fields_show_zero_counts_when_empty(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
         assert any("Accepted (0)" in n for n in field_names)
         assert any("Declined (0)" in n for n in field_names)
         assert any("Tentative (0)" in n for n in field_names)
-        assert any("Late (0)" in n for n in field_names)
 
     def test_rsvp_field_shows_correct_count(self):
         embed = build_event_embed(
-            "Event", START, None, None, None, ["u1", "u2"], [], [], []
+            "Event", START, None, None, None, ["u1", "u2"], [], []
         )
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
         assert "Accepted (2)" in accepted_field["name"]
 
     def test_rsvp_field_shows_user_mentions(self):
         embed = build_event_embed(
-            "Event", START, None, None, None, ["user1"], [], [], []
+            "Event", START, None, None, None, ["user1"], [], []
         )
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
         assert "<@user1>" in accepted_field["value"]
 
     def test_rsvp_field_shows_dash_when_empty(self):
-        embed = build_event_embed("Event", START, None, None, None, [], [], [], [])
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
         assert accepted_field["value"] == "-"
 
     def test_naive_datetime_is_handled_without_error(self):
         naive_start = datetime(2026, 4, 5, 19, 0)
         embed = build_event_embed(
-            "Event", naive_start, None, None, None, [], [], [], []
+            "Event", naive_start, None, None, None, [], [], []
         )
         assert embed["title"] == "Event"
 
@@ -118,9 +117,9 @@ class TestBuildRsvpComponents:
         assert len(components) == 1
         assert components[0]["type"] == 1
 
-    def test_has_five_buttons(self):
+    def test_has_four_buttons(self):
         components = build_rsvp_components("key1")
-        assert len(components[0]["components"]) == 5
+        assert len(components[0]["components"]) == 4
 
     def test_all_buttons_are_type_2(self):
         components = build_rsvp_components("key1")
@@ -139,7 +138,6 @@ class TestBuildRsvpComponents:
             "rsvp:accepted:key1",
             "rsvp:declined:key1",
             "rsvp:tentative:key1",
-            "rsvp:late:key1",
             "delete:key1",
         }
 
@@ -155,7 +153,7 @@ class TestBuildRsvpComponents:
         delete_btn = next(
             b for b in components[0]["components"] if b["custom_id"] == "delete:key1"
         )
-        assert delete_btn["label"] == "🗑️ Delete"
+        assert delete_btn["label"] == "Delete"
 
     def test_rsvp_buttons_have_icon_only_labels(self):
         components = build_rsvp_components("key1")
@@ -177,10 +175,9 @@ class TestBuildRsvpComponents:
         )
         assert btn["style"] == 4
 
-    def test_tentative_and_late_have_secondary_style(self):
+    def test_tentative_has_secondary_style(self):
         components = build_rsvp_components("key1")
-        for action in ("tentative", "late"):
-            btn = next(
-                b for b in components[0]["components"] if action in b["custom_id"]
-            )
-            assert btn["style"] == 2
+        btn = next(
+            b for b in components[0]["components"] if "tentative" in b["custom_id"]
+        )
+        assert btn["style"] == 2

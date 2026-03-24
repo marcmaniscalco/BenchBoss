@@ -4,7 +4,7 @@ import os
 
 import boto3
 
-RSVP_ACTIONS = ("accepted", "declined", "tentative", "late")
+RSVP_ACTIONS = ("accepted", "declined", "tentative")
 
 
 def _table():
@@ -33,7 +33,6 @@ def save_event(
         "accepted": [],
         "declined": [],
         "tentative": [],
-        "late": [],
     }
     if end is not None:
         item["end"] = end

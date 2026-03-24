@@ -8,14 +8,12 @@ _RSVP_LABELS = {
     "accepted": "✅ Accepted",
     "declined": "❌ Declined",
     "tentative": "❔ Tentative",
-    "late": "🕐 Late",
 }
 
 _RSVP_ICONS = {
     "accepted": "✅",
     "declined": "❌",
     "tentative": "❔",
-    "late": "🕐",
 }
 
 # Discord button styles: 3=SUCCESS (green), 4=DANGER (red), 2=SECONDARY (gray)
@@ -23,7 +21,6 @@ _RSVP_STYLES = {
     "accepted": 3,
     "declined": 4,
     "tentative": 2,
-    "late": 2,
 }
 
 
@@ -65,7 +62,6 @@ def build_event_embed(
     accepted: list[str],
     declined: list[str],
     tentative: list[str],
-    late: list[str],
 ) -> dict:
     """Build a Discord embed dict in Apollo style."""
     fields: list[dict] = [
@@ -85,15 +81,11 @@ def build_event_embed(
     # Blank separator before RSVP section
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
 
-    # Two RSVP columns per row, with a blank third inline field to force wrapping
     fields.extend(
         [
             _rsvp_field("accepted", accepted),
             _rsvp_field("declined", declined),
-            {"name": "\u200b", "value": "\u200b", "inline": True},
             _rsvp_field("tentative", tentative),
-            _rsvp_field("late", late),
-            {"name": "\u200b", "value": "\u200b", "inline": True},
         ]
     )
 
@@ -115,7 +107,7 @@ def build_rsvp_components(event_key: str) -> list[dict]:
         {
             "type": 2,
             "style": 4,  # DANGER (red)
-            "label": "🗑️ Delete",
+            "label": "Delete",
             "custom_id": f"delete:{event_key}",
         }
     )

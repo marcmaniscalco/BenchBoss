@@ -9,10 +9,12 @@ from nacl.signing import SigningKey
 from bench_boss.bot import (
     APPLICATION_COMMAND,
     CHANNEL_MESSAGE_WITH_SOURCE,
+    DEFERRED_UPDATE_MESSAGE,
     MESSAGE_COMPONENT,
     PING,
     PONG,
     UPDATE_MESSAGE,
+    _delete_original_message,
     handle_interaction,
     verify_signature,
 )
@@ -199,7 +201,7 @@ class TestScheduleInteraction:
         embed = result["body"]["data"]["embeds"][0]
         assert embed["title"] == "Sprint Review"
 
-    def test_components_have_five_buttons(self):
+    def test_components_have_four_buttons(self):
         event = make_calendar_event()
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
@@ -211,7 +213,7 @@ class TestScheduleInteraction:
             )
 
         buttons = result["body"]["data"]["components"][0]["components"]
-        assert len(buttons) == 5
+        assert len(buttons) == 4
 
     def test_only_next_event_is_used(self):
         events = [
@@ -259,7 +261,6 @@ def make_stored_event(**overrides) -> dict:
         "accepted": [],
         "declined": [],
         "tentative": [],
-        "late": [],
     }
     base.update(overrides)
     return base
@@ -351,11 +352,11 @@ class TestRsvpInteraction:
 # ---------------------------------------------------------------------------
 
 
-def make_delete_body(event_key: str, channel_id: str = "ch1", message_id: str = "msg1") -> dict:
+def make_delete_body(event_key: str, app_id: str = "app1", token: str = "tok1") -> dict:
     return {
         "type": MESSAGE_COMPONENT,
-        "channel_id": channel_id,
-        "message": {"id": message_id},
+        "application_id": app_id,
+        "token": token,
         "member": {"user": {"id": "user1"}},
         "data": {"custom_id": f"delete:{event_key}"},
     }
@@ -365,45 +366,65 @@ class TestDeleteInteraction:
     def test_delete_calls_delete_event(self):
         with (
             patch("bench_boss.bot.delete_event") as mock_delete,
-            patch("bench_boss.bot.requests.delete"),
-        ):
-            handle_interaction(make_delete_body("key1"), bot_token="tok")
-        mock_delete.assert_called_once_with("key1")
-
-    def test_delete_makes_discord_api_call(self):
-        with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.requests.delete") as mock_req,
-        ):
-            handle_interaction(make_delete_body("key1", "ch99", "msg42"), bot_token="mytoken")
-        mock_req.assert_called_once()
-        call_args = mock_req.call_args
-        assert "ch99" in call_args[0][0]
-        assert "msg42" in call_args[0][0]
-        assert call_args[1]["headers"]["Authorization"] == "Bot mytoken"
-
-    def test_delete_returns_ephemeral_confirmation(self):
-        with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.requests.delete"),
-        ):
-            result = handle_interaction(make_delete_body("key1"), bot_token="tok")
-        assert result["statusCode"] == 200
-        assert result["body"]["data"]["content"] == "Event deleted."
-        assert result["body"]["data"]["flags"] == 64
-
-    def test_delete_skips_discord_call_when_no_token(self):
-        with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.requests.delete") as mock_req,
+            patch("bench_boss.bot.threading.Thread"),
         ):
             handle_interaction(make_delete_body("key1"))
-        mock_req.assert_not_called()
+        mock_delete.assert_called_once_with("key1")
+
+    def test_delete_returns_deferred_update(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.threading.Thread"),
+        ):
+            result = handle_interaction(make_delete_body("key1"))
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == DEFERRED_UPDATE_MESSAGE
+
+    def test_delete_starts_background_thread(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.threading.Thread") as mock_thread,
+        ):
+            handle_interaction(make_delete_body("key1", app_id="myapp", token="mytoken"))
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["target"] == _delete_original_message
+        assert kwargs["args"] == ("myapp", "mytoken")
+
+    def test_delete_skips_thread_when_no_app_id_or_token(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.threading.Thread") as mock_thread,
+        ):
+            handle_interaction(
+                {"type": MESSAGE_COMPONENT, "data": {"custom_id": "delete:key1"}}
+            )
+        mock_thread.assert_not_called()
 
     def test_delete_event_failure_returns_error(self):
         with patch("bench_boss.bot.delete_event", side_effect=Exception("DB error")):
-            result = handle_interaction(make_delete_body("key1"), bot_token="tok")
+            result = handle_interaction(make_delete_body("key1"))
         assert "Failed to delete event" in result["body"]["data"]["content"]
+
+
+class TestDeleteOriginalMessage:
+    def test_calls_correct_webhook_url(self):
+        with (
+            patch("bench_boss.bot.time.sleep"),
+            patch("bench_boss.bot.requests.delete") as mock_req,
+        ):
+            _delete_original_message("myapp", "mytoken")
+        url = mock_req.call_args[0][0]
+        assert "webhooks/myapp/mytoken/messages/@original" in url
+
+    def test_sleeps_before_deleting(self):
+        with (
+            patch("bench_boss.bot.time.sleep") as mock_sleep,
+            patch("bench_boss.bot.requests.delete"),
+        ):
+            _delete_original_message("app", "tok")
+        mock_sleep.assert_called_once()
+        assert mock_sleep.call_args[0][0] > 0
 
 
 # ---------------------------------------------------------------------------
