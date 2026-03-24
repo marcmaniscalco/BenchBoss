@@ -10,7 +10,7 @@ Whenever you add or modify code in the `bench_boss/` package, you must also add 
 
 Tests use `pytest`. Run with:
 ```
-pipenv run pytest tests/ -v --cov=bench_boss --cov-report=term-missing
+make cov
 ```
 
 ## Linting and Formatting
@@ -19,20 +19,15 @@ This project uses `ruff` for both linting and formatting.
 
 Check for lint errors:
 ```
-pipenv run ruff check bench_boss/ tests/
+make lint
 ```
 
 Auto-fix lint errors:
 ```
-pipenv run ruff check --fix bench_boss/ tests/
+make lint-fix
 ```
 
 Format code:
 ```
-pipenv run ruff format bench_boss/ tests/
-```
-
-Check formatting without writing (CI):
-```
-pipenv run ruff format --check bench_boss/ tests/
+make format
 ```

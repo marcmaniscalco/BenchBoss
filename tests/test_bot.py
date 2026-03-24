@@ -15,6 +15,7 @@ from bench_boss.bot import (
     PONG,
     UPDATE_MESSAGE,
     _delete_original_message,
+    _send_help_dm,
     handle_interaction,
     verify_signature,
 )
@@ -425,6 +426,104 @@ class TestDeleteOriginalMessage:
             _delete_original_message("app", "tok")
         mock_sleep.assert_called_once()
         assert mock_sleep.call_args[0][0] > 0
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — edge cases
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — help button
+# ---------------------------------------------------------------------------
+
+
+def make_help_body(user_id: str = "user1") -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "member": {"user": {"id": user_id}},
+        "data": {"custom_id": "help"},
+    }
+
+
+class TestHelpInteraction:
+    def test_help_returns_ephemeral_message(self):
+        with patch("bench_boss.bot.threading.Thread"):
+            result = handle_interaction(make_help_body(), bot_token="tok")
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["flags"] == 64
+
+    def test_help_response_mentions_dms(self):
+        with patch("bench_boss.bot.threading.Thread"):
+            result = handle_interaction(make_help_body(), bot_token="tok")
+        assert "DMs" in result["body"]["data"]["content"]
+
+    def test_help_starts_background_thread(self):
+        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+            handle_interaction(make_help_body(user_id="u42"), bot_token="mytoken")
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["target"] == _send_help_dm
+        assert kwargs["args"] == ("u42", "mytoken")
+
+    def test_help_skips_thread_when_no_token(self):
+        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+            handle_interaction(make_help_body())
+        mock_thread.assert_not_called()
+
+    def test_help_skips_thread_when_no_user_id(self):
+        body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "help"}}
+        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+            handle_interaction(body, bot_token="tok")
+        mock_thread.assert_not_called()
+
+    def test_help_user_id_from_top_level_user_in_dm(self):
+        body = {
+            "type": MESSAGE_COMPONENT,
+            "user": {"id": "dm-user"},
+            "data": {"custom_id": "help"},
+        }
+        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+            handle_interaction(body, bot_token="tok")
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["args"] == ("dm-user", "tok")
+
+
+class TestSendHelpDm:
+    def test_opens_dm_channel_with_correct_user(self):
+        mock_resp = type("R", (), {"ok": True, "json": lambda self: {"id": "chan1"}})()
+        with patch("bench_boss.bot.requests.post", return_value=mock_resp) as mock_post:
+            _send_help_dm("user42", "mytoken")
+        first_call = mock_post.call_args_list[0]
+        assert first_call[1]["json"] == {"recipient_id": "user42"}
+
+    def test_sends_message_to_dm_channel(self):
+        mock_resp = type("R", (), {"ok": True, "json": lambda self: {"id": "chan99"}})()
+        with patch("bench_boss.bot.requests.post", return_value=mock_resp) as mock_post:
+            _send_help_dm("user1", "tok")
+        second_call = mock_post.call_args_list[1]
+        assert "chan99" in second_call[0][0]
+
+    def test_uses_bot_token_in_auth_header(self):
+        mock_resp = type("R", (), {"ok": True, "json": lambda self: {"id": "c1"}})()
+        with patch("bench_boss.bot.requests.post", return_value=mock_resp) as mock_post:
+            _send_help_dm("u1", "secret-token")
+        headers = mock_post.call_args_list[0][1]["headers"]
+        assert headers["Authorization"] == "Bot secret-token"
+
+    def test_aborts_when_dm_channel_open_fails(self):
+        mock_resp = type("R", (), {"ok": False, "json": lambda self: {}})()
+        with patch("bench_boss.bot.requests.post", return_value=mock_resp) as mock_post:
+            _send_help_dm("u1", "tok")
+        assert mock_post.call_count == 1  # no second call to send the message
+
+    def test_dm_content_contains_schedule_command(self):
+        mock_resp = type("R", (), {"ok": True, "json": lambda self: {"id": "c1"}})()
+        with patch("bench_boss.bot.requests.post", return_value=mock_resp) as mock_post:
+            _send_help_dm("u1", "tok")
+        message_body = mock_post.call_args_list[1][1]["json"]["content"]
+        assert "/schedule" in message_body
 
 
 # ---------------------------------------------------------------------------

@@ -112,21 +112,22 @@ class TestBuildEventEmbed:
 
 
 class TestBuildRsvpComponents:
-    def test_returns_single_action_row(self):
+    def test_returns_two_action_rows(self):
         components = build_rsvp_components("key1")
-        assert len(components) == 1
-        assert components[0]["type"] == 1
+        assert len(components) == 2
+        assert all(row["type"] == 1 for row in components)
 
-    def test_has_four_buttons(self):
+    def test_first_row_has_four_buttons(self):
         components = build_rsvp_components("key1")
         assert len(components[0]["components"]) == 4
 
     def test_all_buttons_are_type_2(self):
         components = build_rsvp_components("key1")
-        for btn in components[0]["components"]:
-            assert btn["type"] == 2
+        for row in components:
+            for btn in row["components"]:
+                assert btn["type"] == 2
 
-    def test_custom_ids_contain_event_key(self):
+    def test_first_row_custom_ids_contain_event_key(self):
         components = build_rsvp_components("my-event-key")
         for btn in components[0]["components"]:
             assert "my-event-key" in btn["custom_id"]
@@ -181,3 +182,19 @@ class TestBuildRsvpComponents:
             b for b in components[0]["components"] if "tentative" in b["custom_id"]
         )
         assert btn["style"] == 2
+
+    def test_second_row_has_help_button(self):
+        components = build_rsvp_components("key1")
+        assert len(components[1]["components"]) == 1
+        help_btn = components[1]["components"][0]
+        assert help_btn["custom_id"] == "help"
+
+    def test_help_button_has_secondary_style(self):
+        components = build_rsvp_components("key1")
+        help_btn = components[1]["components"][0]
+        assert help_btn["style"] == 2
+
+    def test_help_button_does_not_contain_event_key(self):
+        components = build_rsvp_components("my-event-key")
+        help_btn = components[1]["components"][0]
+        assert "my-event-key" not in help_btn["custom_id"]

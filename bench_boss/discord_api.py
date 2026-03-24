@@ -93,7 +93,7 @@ def build_event_embed(
 
 
 def build_rsvp_components(event_key: str) -> list[dict]:
-    """Return a single action row of RSVP buttons and a delete button."""
+    """Return two action rows: RSVP/delete buttons and a help button."""
     buttons = [
         {
             "type": 2,  # BUTTON
@@ -111,4 +111,13 @@ def build_rsvp_components(event_key: str) -> list[dict]:
             "custom_id": f"delete:{event_key}",
         }
     )
-    return [{"type": 1, "components": buttons}]  # ACTION_ROW
+    help_button = {
+        "type": 2,
+        "style": 2,  # SECONDARY (gray)
+        "label": "📖 Commands",
+        "custom_id": "help",
+    }
+    return [
+        {"type": 1, "components": buttons},
+        {"type": 1, "components": [help_button]},
+    ]

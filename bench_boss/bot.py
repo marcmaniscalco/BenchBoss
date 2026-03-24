@@ -74,6 +74,8 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
 
     if interaction_type == MESSAGE_COMPONENT:
         custom_id = body.get("data", {}).get("custom_id", "")
+        if custom_id == "help":
+            return _handle_help(body, bot_token)
         if custom_id.startswith("delete:"):
             return _handle_delete(body, bot_token)
         return _handle_rsvp(body)
@@ -197,6 +199,59 @@ def _handle_delete(body: dict, bot_token: str) -> dict:
     # Acknowledge the interaction immediately (type 6 = DEFERRED_UPDATE_MESSAGE).
     # The background thread deletes the message after the callback is sent.
     return {"statusCode": 200, "body": {"type": DEFERRED_UPDATE_MESSAGE}}
+
+
+_HELP_TEXT = """**BenchBoss Commands**
+
+**`/schedule <url>`**
+Posts the next upcoming event from a webcal or https calendar URL with RSVP buttons. Members can mark themselves as accepted, declined, or tentative directly from the event card.
+"""
+
+
+def _handle_help(body: dict, bot_token: str) -> dict:
+    member = body.get("member") or {}
+    user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
+
+    if user_id and bot_token:
+        threading.Thread(
+            target=_send_help_dm,
+            args=(user_id, bot_token),
+            daemon=True,
+        ).start()
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {
+                "content": "📬 Command info has been sent to your DMs!",
+                "flags": 64,  # EPHEMERAL — only visible to the user who clicked
+            },
+        },
+    }
+
+
+def _send_help_dm(user_id: str, bot_token: str) -> None:
+    """Open a DM channel with the user and send command details."""
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+    resp = requests.post(
+        "https://discord.com/api/v10/users/@me/channels",
+        json={"recipient_id": user_id},
+        headers=headers,
+    )
+    if not resp.ok:
+        return
+    channel_id = resp.json().get("id")
+    if not channel_id:
+        return
+    requests.post(
+        f"https://discord.com/api/v10/channels/{channel_id}/messages",
+        json={"content": _HELP_TEXT},
+        headers=headers,
+    )
 
 
 def _delete_original_message(app_id: str, token: str) -> None:

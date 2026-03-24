@@ -46,6 +46,19 @@ Verify:
 python --version
 ```
 
+### Make
+
+```powershell
+winget install GnuWin32.Make
+```
+
+After installation, add Make to your PATH if prompted (or manually add `C:\Program Files (x86)\GnuWin32\bin`).
+
+Verify:
+```powershell
+make --version
+```
+
 ### ngrok
 
 1. Download from https://ngrok.com/download (Windows 64-bit)
@@ -218,10 +231,10 @@ Open a PowerShell window. You need four env vars — the Discord credentials plu
 ```powershell
 $env:DISCORD_PUBLIC_KEY = "<your-public-key>"
 $env:DISCORD_TOKEN      = "<your-bot-token>"
-make local
+make server
 ```
 
-`make local` sets `DYNAMODB_TABLE`, `DYNAMODB_ENDPOINT`, and fake AWS credentials automatically. You only need to supply the two Discord env vars. `DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS.
+`make server` sets `DYNAMODB_TABLE`, `DYNAMODB_ENDPOINT`, and fake AWS credentials automatically. You only need to supply the two Discord env vars. `DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS.
 
 > Make sure DynamoDB Local is running (Part 3.2) before starting the server.
 
