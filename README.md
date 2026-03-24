@@ -19,11 +19,12 @@ BenchBoss/
 │   ├── test_calendar.py    # Unit tests for calendar parsing
 │   ├── test_discord_api.py # Unit tests for embed/component builders
 │   └── test_dynamo.py      # Unit tests for DynamoDB helpers
-├── local_server.py         # Flask server for local development and Discord testing
+├── local/
+│   ├── docker-compose.yml      # DynamoDB Local + Admin UI for local development
+│   ├── local_server.py         # Flask server for local development and Discord testing
+│   └── create_local_table.py   # One-time script to create the local DynamoDB table
 ├── lambda_function.py      # AWS Lambda entry point (production)
 ├── register_commands.py    # One-time script to register slash commands with Discord
-├── create_local_table.py   # One-time script to create the local DynamoDB table
-├── docker-compose.yml      # DynamoDB Local + Admin UI for local development
 ├── Pipfile                 # Python dependencies
 └── template.yaml           # AWS SAM deployment template
 ```
@@ -126,7 +127,7 @@ The bot stores RSVP state in DynamoDB. For local development, `docker-compose` s
 2. From the project root:
 
 ```powershell
-docker-compose up -d
+docker-compose -f local/docker-compose.yml up -d
 ```
 
 This starts two containers:
@@ -144,8 +145,8 @@ docker ps
 
 Stop/start later with:
 ```powershell
-docker-compose stop
-docker-compose start
+docker-compose -f local/docker-compose.yml stop
+docker-compose -f local/docker-compose.yml start
 ```
 
 #### Create the table (once)
@@ -155,14 +156,14 @@ Run this once after the containers are up for the first time:
 ```powershell
 $env:AWS_ACCESS_KEY_ID     = "local"
 $env:AWS_SECRET_ACCESS_KEY = "local"
-pipenv run python create_local_table.py
+pipenv run python local/create_local_table.py
 ```
 
 #### View and edit data
 
 Open **http://localhost:8001** in your browser. The admin UI lets you browse tables, inspect items, and run queries against your local DynamoDB.
 
-> Data is stored in memory and is **lost when the container stops**. This is intentional for local dev — run `create_local_table.py` again after a fresh `docker-compose up`.
+> Data is stored in memory and is **lost when the container stops**. This is intentional for local dev — run `local/create_local_table.py` again after a fresh `docker-compose up`.
 
 ### 3.3 Lint and format
 
@@ -236,7 +237,7 @@ $env:DYNAMODB_TABLE         = "bench-boss-local"
 $env:DYNAMODB_ENDPOINT      = "http://localhost:8000"
 $env:AWS_ACCESS_KEY_ID      = "local"
 $env:AWS_SECRET_ACCESS_KEY  = "local"
-pipenv run python local_server.py
+pipenv run python local/local_server.py
 ```
 
 `DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS. The `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values can be any non-empty string — DynamoDB Local does not validate credentials.
@@ -297,7 +298,7 @@ Go to your server and type `/ping`. The bot will reply **Pong!**
    {"name": "hello", "description": "Say hello."}
    ```
 3. Run `pipenv run python register_commands.py` again
-4. Restart `local_server.py`
+4. Restart `local/local_server.py`
 
 ---
 

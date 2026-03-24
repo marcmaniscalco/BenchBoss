@@ -2,8 +2,8 @@
 Creates the BenchBoss DynamoDB table in the local Docker instance.
 Run once after starting docker-compose:
 
-    docker-compose up -d
-    python create_local_table.py
+    docker-compose -f local/docker-compose.yml up -d
+    python local/create_local_table.py
 """
 
 import boto3

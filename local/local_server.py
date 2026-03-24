@@ -3,7 +3,7 @@ Local development server — use this to test with Discord on your machine.
 
 Usage:
     set DISCORD_PUBLIC_KEY=<your-key>
-    python local_server.py
+    python local/local_server.py
 
 Then in a second terminal:
     ngrok http 3000
@@ -11,6 +11,11 @@ Then in a second terminal:
 
 import json
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from flask import Flask, request, jsonify
 from bench_boss.bot import verify_signature, handle_interaction
 
