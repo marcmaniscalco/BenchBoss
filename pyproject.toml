@@ -12,4 +12,4 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["discord_bot"]
+known-first-party = ["bench_boss"]
