@@ -7,14 +7,14 @@ BLURPLE = 0x5865F2
 _RSVP_LABELS = {
     "accepted": "✅ Accepted",
     "declined": "❌ Declined",
-    "maybe": "❓ Maybe",
+    "tentative": "❔ Tentative",
     "late": "🕐 Late",
 }
 
 _RSVP_ICONS = {
     "accepted": "✅",
     "declined": "❌",
-    "maybe": "❓",
+    "tentative": "❔",
     "late": "🕐",
 }
 
@@ -22,7 +22,7 @@ _RSVP_ICONS = {
 _RSVP_STYLES = {
     "accepted": 3,
     "declined": 4,
-    "maybe": 2,
+    "tentative": 2,
     "late": 2,
 }
 
@@ -64,7 +64,7 @@ def build_event_embed(
     description: str | None,
     accepted: list[str],
     declined: list[str],
-    maybe: list[str],
+    tentative: list[str],
     late: list[str],
 ) -> dict:
     """Build a Discord embed dict in Apollo style."""
@@ -91,7 +91,7 @@ def build_event_embed(
             _rsvp_field("accepted", accepted),
             _rsvp_field("declined", declined),
             {"name": "\u200b", "value": "\u200b", "inline": True},
-            _rsvp_field("maybe", maybe),
+            _rsvp_field("tentative", tentative),
             _rsvp_field("late", late),
             {"name": "\u200b", "value": "\u200b", "inline": True},
         ]

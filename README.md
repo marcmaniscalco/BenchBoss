@@ -10,15 +10,22 @@ Discord sends an HTTP POST for every slash command — no persistent process req
 ```
 BenchBoss/
 ├── bench_boss/
-│   ├── bot.py           # Core logic — signature verification + command handling
-│   └── calendar.py      # WebCalReader — fetches and parses iCal calendars
+│   ├── bot.py              # Core logic — signature verification + command handling
+│   ├── calendar.py         # WebCalReader — fetches and parses iCal calendars
+│   ├── discord_api.py      # Embed and component builders
+│   └── dynamo.py           # DynamoDB persistence for event RSVP state
 ├── tests/
-│   └── test_bot.py      # Unit tests
-├── local_server.py      # Flask server for local development and Discord testing
-├── lambda_function.py   # AWS Lambda entry point (production)
-├── register_commands.py # One-time script to register slash commands with Discord
-├── Pipfile              # Python dependencies
-└── template.yaml        # AWS SAM deployment template
+│   ├── test_bot.py         # Unit tests for bot logic
+│   ├── test_calendar.py    # Unit tests for calendar parsing
+│   ├── test_discord_api.py # Unit tests for embed/component builders
+│   └── test_dynamo.py      # Unit tests for DynamoDB helpers
+├── local_server.py         # Flask server for local development and Discord testing
+├── lambda_function.py      # AWS Lambda entry point (production)
+├── register_commands.py    # One-time script to register slash commands with Discord
+├── create_local_table.py   # One-time script to create the local DynamoDB table
+├── docker-compose.yml      # DynamoDB Local + Admin UI for local development
+├── Pipfile                 # Python dependencies
+└── template.yaml           # AWS SAM deployment template
 ```
 
 ---
@@ -111,62 +118,51 @@ This installs all packages from `Pipfile` (including dev dependencies like pytes
 
 ### 3.2 Set up DynamoDB Local
 
-The bot stores RSVP state in DynamoDB. For local development you run DynamoDB on your machine instead of connecting to AWS.
+The bot stores RSVP state in DynamoDB. For local development, `docker-compose` starts DynamoDB Local alongside a web-based admin UI so you can browse the data in your browser.
 
-#### Docker (recommended)
+#### Start the containers
 
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-2. Start DynamoDB Local:
+2. From the project root:
 
 ```powershell
-docker run -d --name dynamodb-local -p 8000:8000 amazon/dynamodb-local
+docker-compose up -d
 ```
 
-Verify it is running:
+This starts two containers:
+
+| Container | Port | Purpose |
+|---|---|---|
+| `bench-boss-dynamo` | 8000 | DynamoDB Local |
+| `bench-boss-dynamo-admin` | 8001 | Admin UI — view and edit data |
+
+Verify they are running:
 
 ```powershell
 docker ps
 ```
 
-Stop/start it later with:
+Stop/start later with:
 ```powershell
-docker stop dynamodb-local
-docker start dynamodb-local
+docker-compose stop
+docker-compose start
 ```
 
----
+#### Create the table (once)
 
-#### Create the table
-
-Once DynamoDB Local is running, create the events table. The AWS CLI sends the request to `localhost:8000` — credentials can be any non-empty string for local use:
+Run this once after the containers are up for the first time:
 
 ```powershell
 $env:AWS_ACCESS_KEY_ID     = "local"
 $env:AWS_SECRET_ACCESS_KEY = "local"
-$env:AWS_DEFAULT_REGION    = "us-east-1"
-
-aws dynamodb create-table `
-  --table-name bench-boss-events `
-  --attribute-definitions AttributeName=event_key,AttributeType=S `
-  --key-schema AttributeName=event_key,KeyType=HASH `
-  --billing-mode PAY_PER_REQUEST `
-  --endpoint-url http://localhost:8000
+pipenv run python create_local_table.py
 ```
 
-Verify the table was created:
+#### View and edit data
 
-```powershell
-aws dynamodb list-tables --endpoint-url http://localhost:8000
-```
+Open **http://localhost:8001** in your browser. The admin UI lets you browse tables, inspect items, and run queries against your local DynamoDB.
 
-Expected output:
-```json
-{
-    "TableNames": ["bench-boss-events"]
-}
-```
-
-> You only need to run `create-table` once. The table persists between restarts when using the Docker container.
+> Data is stored in memory and is **lost when the container stops**. This is intentional for local dev — run `create_local_table.py` again after a fresh `docker-compose up`.
 
 ### 3.3 Lint and format
 
@@ -236,15 +232,14 @@ Open a PowerShell window. You need four env vars — the Discord credentials plu
 ```powershell
 $env:DISCORD_PUBLIC_KEY     = "<your-public-key>"
 $env:DISCORD_TOKEN          = "<your-bot-token>"
-$env:DYNAMODB_TABLE         = "bench-boss-events"
-$env:AWS_ENDPOINT_URL       = "http://localhost:8000"
+$env:DYNAMODB_TABLE         = "bench-boss-local"
+$env:DYNAMODB_ENDPOINT      = "http://localhost:8000"
 $env:AWS_ACCESS_KEY_ID      = "local"
 $env:AWS_SECRET_ACCESS_KEY  = "local"
-$env:AWS_DEFAULT_REGION     = "us-east-1"
 pipenv run python local_server.py
 ```
 
-`AWS_ENDPOINT_URL` tells boto3 to send all AWS requests to DynamoDB Local instead of the real AWS endpoint. The `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values can be any non-empty string — DynamoDB Local does not validate credentials.
+`DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS. The `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values can be any non-empty string — DynamoDB Local does not validate credentials.
 
 > Make sure DynamoDB Local is running (Part 3.2) before starting the server.
 

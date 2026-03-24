@@ -258,7 +258,7 @@ def make_stored_event(**overrides) -> dict:
         "end": "2026-04-05T20:00:00+00:00",
         "accepted": [],
         "declined": [],
-        "maybe": [],
+        "tentative": [],
         "late": [],
     }
     base.update(overrides)
@@ -298,9 +298,9 @@ class TestRsvpInteraction:
     def test_update_rsvp_called_with_correct_args(self):
         updated = make_stored_event()
         with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
-            handle_interaction(make_rsvp_body("rsvp:maybe:abc-key", "user99"))
+            handle_interaction(make_rsvp_body("rsvp:tentative:abc-key", "user99"))
 
-        mock_update.assert_called_once_with("abc-key", "user99", "maybe")
+        mock_update.assert_called_once_with("abc-key", "user99", "tentative")
 
     def test_event_not_found_returns_error_message(self):
         with patch("bench_boss.bot.update_rsvp", side_effect=ValueError("not found")):

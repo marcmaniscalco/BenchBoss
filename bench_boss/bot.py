@@ -119,7 +119,7 @@ def _handle_schedule(webcal_url: str) -> dict:
         description=ev.description,
         accepted=[],
         declined=[],
-        maybe=[],
+        tentative=[],
         late=[],
     )
     components = build_rsvp_components(event_key)
@@ -161,7 +161,7 @@ def _handle_rsvp(body: dict) -> dict:
         description=event.get("description"),
         accepted=event.get("accepted", []),
         declined=event.get("declined", []),
-        maybe=event.get("maybe", []),
+        tentative=event.get("tentative", []),
         late=event.get("late", []),
     )
     components = build_rsvp_components(event_key)

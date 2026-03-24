@@ -41,7 +41,7 @@ class TestSaveEvent:
         item = mock_table.put_item.call_args[1]["Item"]
         assert item["accepted"] == []
         assert item["declined"] == []
-        assert item["maybe"] == []
+        assert item["tentative"] == []
         assert item["late"] == []
 
     def test_omits_none_optional_fields(self, mock_table):
@@ -103,7 +103,7 @@ def _make_event(**overrides) -> dict:
         "start": START,
         "accepted": [],
         "declined": [],
-        "maybe": [],
+        "tentative": [],
         "late": [],
     }
     base.update(overrides)
@@ -128,11 +128,11 @@ class TestUpdateRsvp:
         assert "user1" not in result["accepted"]
 
     def test_user_appears_in_only_one_action(self, mock_table):
-        mock_table.get_item.return_value = {"Item": _make_event(maybe=["user1"])}
+        mock_table.get_item.return_value = {"Item": _make_event(tentative=["user1"])}
         result = update_rsvp("key1", "user1", "late")
         counts = sum(
             "user1" in result.get(a, [])
-            for a in ("accepted", "declined", "maybe", "late")
+            for a in ("accepted", "declined", "tentative", "late")
         )
         assert counts == 1
 

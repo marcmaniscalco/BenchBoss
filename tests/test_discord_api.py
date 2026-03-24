@@ -77,7 +77,7 @@ class TestBuildEventEmbed:
         field_names = [f["name"] for f in embed["fields"]]
         assert any("Accepted (0)" in n for n in field_names)
         assert any("Declined (0)" in n for n in field_names)
-        assert any("Maybe (0)" in n for n in field_names)
+        assert any("Tentative (0)" in n for n in field_names)
         assert any("Late (0)" in n for n in field_names)
 
     def test_rsvp_field_shows_correct_count(self):
@@ -138,7 +138,7 @@ class TestBuildRsvpComponents:
         assert custom_ids == {
             "rsvp:accepted:key1",
             "rsvp:declined:key1",
-            "rsvp:maybe:key1",
+            "rsvp:tentative:key1",
             "rsvp:late:key1",
             "delete:key1",
         }
@@ -161,7 +161,7 @@ class TestBuildRsvpComponents:
         components = build_rsvp_components("key1")
         rsvp_btns = [b for b in components[0]["components"] if b["custom_id"].startswith("rsvp:")]
         for btn in rsvp_btns:
-            assert btn["label"] in {"✅", "❌", "❓", "🕐"}
+            assert btn["label"] in {"✅", "❌", "❔", "🕐"}
 
     def test_accept_button_has_success_style(self):
         components = build_rsvp_components("key1")
@@ -177,9 +177,9 @@ class TestBuildRsvpComponents:
         )
         assert btn["style"] == 4
 
-    def test_maybe_and_late_have_secondary_style(self):
+    def test_tentative_and_late_have_secondary_style(self):
         components = build_rsvp_components("key1")
-        for action in ("maybe", "late"):
+        for action in ("tentative", "late"):
             btn = next(
                 b for b in components[0]["components"] if action in b["custom_id"]
             )

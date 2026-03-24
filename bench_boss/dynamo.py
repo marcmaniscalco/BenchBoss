@@ -4,11 +4,17 @@ import os
 
 import boto3
 
-RSVP_ACTIONS = ("accepted", "declined", "maybe", "late")
+RSVP_ACTIONS = ("accepted", "declined", "tentative", "late")
 
 
 def _table():
-    return boto3.resource("dynamodb").Table(os.environ["DYNAMODB_TABLE"])
+    kwargs = {}
+    endpoint = os.environ.get("DYNAMODB_ENDPOINT")
+    if endpoint:
+        kwargs["endpoint_url"] = endpoint
+    return boto3.resource("dynamodb", region_name="us-east-1", **kwargs).Table(
+        os.environ["DYNAMODB_TABLE"]
+    )
 
 
 def save_event(
@@ -26,7 +32,7 @@ def save_event(
         "start": start,
         "accepted": [],
         "declined": [],
-        "maybe": [],
+        "tentative": [],
         "late": [],
     }
     if end is not None:
