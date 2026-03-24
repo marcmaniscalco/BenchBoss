@@ -46,19 +46,6 @@ Verify:
 python --version
 ```
 
-### AWS CLI
-
-Required for creating the local DynamoDB table (Part 3.2) and deploying to AWS (Part 6).
-
-```powershell
-winget install Amazon.AWSCLI
-```
-
-Verify:
-```powershell
-aws --version
-```
-
 ### ngrok
 
 1. Download from https://ngrok.com/download (Windows 64-bit)
