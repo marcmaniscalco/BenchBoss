@@ -1,0 +1,24 @@
+2026-03-24 21:04:22,014 INFO __main__: Starting local server on http://0.0.0.0:3000
+2026-03-24 21:04:22,027 INFO uvicorn.error: Started server process [13640]
+2026-03-24 21:04:22,028 INFO uvicorn.error: Waiting for application startup.
+2026-03-24 21:04:22,028 INFO uvicorn.error: Application startup complete.
+2026-03-24 21:04:22,028 INFO uvicorn.error: Uvicorn running on http://0.0.0.0:3000 (Press CTRL+C to quit)
+2026-03-24 21:04:28,301 INFO __main__: Received interaction type=2
+2026-03-24 21:04:28,301 INFO __main__: Responding with statusCode=200
+2026-03-24 21:04:28,302 INFO uvicorn.access: 35.227.62.178:0 - "POST /interactions HTTP/1.1" 200
+2026-03-24 21:04:40,506 INFO __main__: Received interaction type=2
+2026-03-24 21:04:41,179 INFO botocore.credentials: Found credentials in environment variables.
+2026-03-24 21:04:41,268 INFO bench_boss.bot: Scheduled event 'Minutemen at Goats' (key=d51a37d9-7735-4bbb-8c95-5ad1c5d0de46)
+2026-03-24 21:04:41,269 INFO __main__: Responding with statusCode=200
+2026-03-24 21:04:41,269 INFO uvicorn.access: 35.227.62.178:0 - "POST /interactions HTTP/1.1" 200
+2026-03-24 21:06:39,254 INFO uvicorn.error: Shutting down
+2026-03-24 21:06:39,363 INFO uvicorn.error: Waiting for application shutdown.
+2026-03-24 21:06:39,363 INFO uvicorn.error: Application shutdown complete.
+2026-03-24 21:06:39,363 INFO uvicorn.error: Finished server process [13640]
+2026-03-24 21:10:07,819 INFO __main__: Starting local server on http://127.0.0.1:3000
+2026-03-24 21:10:07,825 INFO werkzeug: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:3000
+2026-03-24 21:10:07,825 INFO werkzeug: [33mPress CTRL+C to quit[0m
+2026-03-24 21:10:13,541 INFO __main__: Received interaction type=2
+2026-03-24 21:10:13,542 INFO __main__: Responding with statusCode=200
+2026-03-24 21:10:13,542 INFO werkzeug: 127.0.0.1 - - [24/Mar/2026 21:10:13] "POST /interactions HTTP/1.1" 200 -

@@ -1,9 +1,12 @@
 """DynamoDB persistence for event RSVP state."""
 
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 
 import boto3
+
+logger = logging.getLogger(__name__)
 
 RSVP_ACTIONS = ("accepted", "declined", "tentative")
 
@@ -35,6 +38,7 @@ def save_event(
     description: str | None,
 ) -> None:
     """Persist a new event with empty RSVP lists."""
+    logger.debug("Saving event %s (%r)", event_key, name)
     item: dict = {
         "event_key": event_key,
         "name": name,
@@ -55,6 +59,7 @@ def save_event(
 
 def delete_event(event_key: str) -> None:
     """Delete an event and all its RSVP data."""
+    logger.debug("Deleting event %s", event_key)
     _table().delete_item(Key={"event_key": event_key})
 
 
@@ -74,6 +79,7 @@ def update_rsvp(event_key: str, user_id: str, action: str) -> dict:
     """
     event = get_event(event_key)
     if event is None:
+        logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
     already_in_action = user_id in event.get(action, [])

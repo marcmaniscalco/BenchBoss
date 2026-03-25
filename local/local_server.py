@@ -10,14 +10,26 @@ Then in a second terminal:
 """
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("server.log", encoding="utf-8"),
+    ],
+)
+logger = logging.getLogger(__name__)
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from flask import Flask, request, jsonify
-from bench_boss.bot import verify_signature, handle_interaction
+from flask import Flask, jsonify, request
+
+from bench_boss.bot import handle_interaction, verify_signature
 
 DISCORD_PUBLIC_KEY = os.environ["DISCORD_PUBLIC_KEY"]
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
@@ -32,12 +44,16 @@ def interactions():
     raw_body = request.get_data()
 
     if not verify_signature(raw_body, signature, timestamp, DISCORD_PUBLIC_KEY):
+        logger.warning("Invalid request signature from %s", request.remote_addr)
         return jsonify({"error": "Invalid request signature"}), 401
 
     body = json.loads(raw_body)
+    logger.info("Received interaction type=%s", body.get("type"))
     result = handle_interaction(body, bot_token=DISCORD_TOKEN)
+    logger.info("Responding with statusCode=%s", result["statusCode"])
     return jsonify(result["body"]), result["statusCode"]
 
 
 if __name__ == "__main__":
+    logger.info("Starting local server on http://127.0.0.1:3000")
     app.run(port=3000)

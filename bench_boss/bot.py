@@ -2,10 +2,13 @@
 Core bot logic — shared between local dev server and Lambda.
 """
 
+import logging
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
+
+logger = logging.getLogger(__name__)
 
 import requests
 from nacl.exceptions import BadSignatureError
@@ -36,6 +39,7 @@ def verify_signature(
         verify_key.verify(timestamp.encode() + raw_body, bytes.fromhex(signature))
         return True
     except (BadSignatureError, Exception):
+        logger.warning("Signature verification failed")
         return False
 
 
@@ -96,9 +100,11 @@ def _handle_schedule(webcal_url: str) -> dict:
     try:
         events = WebCalReader(webcal_url).get_upcoming(days=365)
     except Exception as e:
+        logger.error("Failed to fetch calendar %s: %s", webcal_url, e)
         return _message(f"Failed to fetch calendar: {e}")
 
     if not events:
+        logger.info("No upcoming events found for %s", webcal_url)
         return _message("No upcoming events found in the calendar.")
 
     ev = events[0]
@@ -113,7 +119,9 @@ def _handle_schedule(webcal_url: str) -> dict:
             location=ev.location,
             description=ev.description,
         )
+        logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
     except Exception as e:
+        logger.error("Failed to save event: %s", e)
         return _message(f"Failed to save event: {e}")
 
     embed = build_event_embed(
@@ -149,9 +157,12 @@ def _handle_rsvp(body: dict) -> dict:
 
     try:
         event = update_rsvp(event_key, user_id, action)
+        logger.info("RSVP %s for event %s by user %s", action, event_key, user_id)
     except ValueError:
+        logger.warning("RSVP failed — event not found: %s", event_key)
         return _message("Event not found.")
     except Exception as e:
+        logger.error("Failed to update RSVP for event %s: %s", event_key, e)
         return _message(f"Failed to update RSVP: {e}")
 
     start = datetime.fromisoformat(event["start"])
@@ -181,10 +192,14 @@ def _handle_rsvp(body: dict) -> dict:
 def _handle_delete(body: dict, bot_token: str) -> dict:
     custom_id = body.get("data", {}).get("custom_id", "")
     event_key = custom_id.split(":", 1)[1]
+    logger.info("Deleting event %s", event_key)
 
     try:
         delete_event(event_key)
+    except ValueError:
+        logger.debug("Event %s not found in DB, continuing with message deletion", event_key)
     except Exception as e:
+        logger.error("Failed to delete event %s: %s", event_key, e)
         return _message(f"Failed to delete event: {e}")
 
     app_id = body.get("application_id", "")
@@ -233,6 +248,7 @@ def _handle_help(body: dict, bot_token: str) -> dict:
 
 def _send_help_dm(user_id: str, bot_token: str) -> None:
     """Open a DM channel with the user and send command details."""
+    logger.debug("Opening DM channel with user %s", user_id)
     headers = {
         "Authorization": f"Bot {bot_token}",
         "Content-Type": "application/json",
@@ -243,15 +259,21 @@ def _send_help_dm(user_id: str, bot_token: str) -> None:
         headers=headers,
     )
     if not resp.ok:
+        logger.warning("Failed to open DM channel for user %s", user_id)
         return
     channel_id = resp.json().get("id")
     if not channel_id:
+        logger.warning("No channel ID in DM response for user %s", user_id)
         return
-    requests.post(
+    msg_resp = requests.post(
         f"https://discord.com/api/v10/channels/{channel_id}/messages",
         json={"content": _HELP_TEXT},
         headers=headers,
     )
+    if msg_resp.ok:
+        logger.info("Help DM sent to user %s", user_id)
+    else:
+        logger.warning("Failed to send help DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
 
 
 def _delete_original_message(app_id: str, token: str) -> None:
