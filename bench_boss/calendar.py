@@ -43,10 +43,7 @@ class WebCalReader:
     def get_upcoming(self, days: int = 7) -> list[CalendarEvent]:
         """Return events starting within the next `days` days, sorted by start time."""
         now = datetime.now(tz=UTC)
-        if days < 28:
-            cutoff = now.replace(day=now.day + days)
-        else:
-            cutoff = self._add_days(now, days)
+        cutoff = self._add_days(now, days)
         events = [e for e in self.get_events() if now <= self._start_dt(e) <= cutoff]
 
         return sorted(events, key=lambda e: self._start_dt(e))

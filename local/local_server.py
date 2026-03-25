@@ -20,7 +20,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("server.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
