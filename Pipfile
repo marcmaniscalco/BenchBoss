@@ -10,6 +10,7 @@ requests = "~=2.32.3"
 icalendar = "~=6.1.3"
 boto3 = "~=1.42.74"
 python-dotenv = "*"
+aws-lambda-powertools = "*"
 
 [dev-packages]
 pytest = "~=8.3.5"

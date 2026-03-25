@@ -2,21 +2,21 @@
 Core bot logic — shared between local dev server and Lambda.
 """
 
-import logging
 import threading
 import time
 import uuid
 from datetime import UTC, datetime
 
-logger = logging.getLogger(__name__)
-
 import requests
+from aws_lambda_powertools import Logger
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
 from bench_boss.discord_api import build_event_embed, build_rsvp_components
 from bench_boss.dynamo import delete_event, save_event, update_rsvp
+
+logger = Logger(service="bench-boss")
 
 # Interaction types
 PING = 1

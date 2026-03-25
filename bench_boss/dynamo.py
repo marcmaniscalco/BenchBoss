@@ -1,12 +1,12 @@
 """DynamoDB persistence for event RSVP state."""
 
-import logging
 import os
 from datetime import UTC, datetime, timedelta
 
 import boto3
+from aws_lambda_powertools import Logger
 
-logger = logging.getLogger(__name__)
+logger = Logger(service="bench-boss")
 
 RSVP_ACTIONS = ("accepted", "declined", "tentative")
 

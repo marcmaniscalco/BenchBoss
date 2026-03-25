@@ -4,15 +4,15 @@ Reads a webcal/iCal URL and returns a list of calendar events.
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 import requests
+from aws_lambda_powertools import Logger
 from icalendar import Calendar
 
-logger = logging.getLogger(__name__)
+logger = Logger(service="bench-boss")
 
 
 @dataclass

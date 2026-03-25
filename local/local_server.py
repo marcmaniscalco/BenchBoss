@@ -10,7 +10,6 @@ Then in a second terminal:
 """
 
 import json
-import logging
 import os
 import sys
 from pathlib import Path
@@ -19,20 +18,14 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-logger = logging.getLogger(__name__)
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from aws_lambda_powertools import Logger
 from flask import Flask, jsonify, request
 
 from bench_boss.bot import handle_interaction, verify_signature
+
+logger = Logger(service="bench-boss")
 
 DISCORD_PUBLIC_KEY = os.environ["DISCORD_PUBLIC_KEY"]
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]

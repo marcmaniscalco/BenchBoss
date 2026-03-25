@@ -3,13 +3,13 @@ AWS Lambda entry point — used in production.
 """
 
 import json
-import logging
 import os
+
+from aws_lambda_powertools import Logger
 
 from bench_boss.bot import handle_interaction, verify_signature
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = Logger(service="bench-boss")
 
 DISCORD_PUBLIC_KEY = os.environ["DISCORD_PUBLIC_KEY"]
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
