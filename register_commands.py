@@ -8,7 +8,11 @@ Usage:
 """
 
 import os
+
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 DISCORD_APP_ID = os.environ["DISCORD_APP_ID"]

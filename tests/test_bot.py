@@ -513,7 +513,7 @@ class TestSendHelpDm:
         assert headers["Authorization"] == "Bot secret-token"
 
     def test_aborts_when_dm_channel_open_fails(self):
-        mock_resp = type("R", (), {"ok": False, "json": lambda self: {}})()
+        mock_resp = type("R", (), {"ok": False, "status_code": 403, "text": "Forbidden", "json": lambda self: {}})()
         with patch("bench_boss.bot.requests.post", return_value=mock_resp) as mock_post:
             _send_help_dm("u1", "tok")
         assert mock_post.call_count == 1  # no second call to send the message

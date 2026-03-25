@@ -9,6 +9,7 @@ flask = "~=3.1.0"
 requests = "~=2.32.3"
 icalendar = "~=6.1.3"
 boto3 = "~=1.42.74"
+python-dotenv = "*"
 
 [dev-packages]
 pytest = "~=8.3.5"

@@ -108,7 +108,27 @@ On the **General Information** tab, copy and save:
 
 ## Part 3 — Local Setup
 
-### 3.1 Install pipenv and dependencies
+### 3.1 Create your `.env` file
+
+Copy the example below into a file named `.env` in the project root and fill in your values. This file is git-ignored and never committed.
+
+```
+DISCORD_PUBLIC_KEY=your-discord-public-key
+DISCORD_TOKEN=your-discord-bot-token
+DISCORD_APP_ID=your-discord-application-id
+GUILD_ID=your-discord-guild-id
+```
+
+| Variable | Where to find it |
+|---|---|
+| `DISCORD_PUBLIC_KEY` | Developer Portal → Your App → General Information → Public Key |
+| `DISCORD_TOKEN` | Developer Portal → Your App → Bot → Token |
+| `DISCORD_APP_ID` | Developer Portal → Your App → General Information → Application ID |
+| `GUILD_ID` | Discord — right-click your server → Copy Server ID (requires Developer Mode) |
+
+> Enable Developer Mode in Discord under **User Settings → Advanced → Developer Mode**.
+
+### 3.2 Install pipenv and dependencies
 
 ```powershell
 pip install pipenv
@@ -117,7 +137,7 @@ make install
 
 This installs all packages from `Pipfile` (including dev dependencies like pytest) and generates `Pipfile.lock`.
 
-### 3.2 Set up DynamoDB Local
+### 3.3 Set up DynamoDB Local
 
 The bot stores RSVP state in DynamoDB. For local development, `docker-compose` starts DynamoDB Local alongside a web-based admin UI so you can browse the data in your browser.
 
@@ -163,7 +183,7 @@ Open **http://localhost:8001** in your browser. The admin UI lets you browse tab
 
 > Data is stored in memory and is **lost when the container stops**. This is intentional for local dev — run `local/create_local_table.py` again after a fresh `docker-compose up`.
 
-### 3.3 Lint and format
+### 3.4 Lint and format
 
 This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting.
 
@@ -182,7 +202,7 @@ Format code:
 make format
 ```
 
-### 3.4 Run unit tests
+### 3.5 Run unit tests
 
 ```powershell
 make test
@@ -197,21 +217,15 @@ make cov
 `--cov=bench_boss` measures coverage for the `bench_boss` package only.
 `--cov-report=term-missing` prints which lines are not covered.
 
-### 3.5 Register slash commands with Discord
+### 3.6 Register slash commands with Discord
 
-Run this once (and again whenever you add or change commands):
-
-Commands are registered as guild (server-specific) commands for instant availability during development.
+Run this once (and again whenever you add or change commands). Commands are registered as guild (server-specific) commands for instant availability during development.
 
 ```powershell
-$env:DISCORD_TOKEN  = "<your-bot-token>"
-$env:DISCORD_APP_ID = "<your-application-id>"
-$env:GUILD_ID       = "<your-server-id>"
 make register
 ```
 
-> Your Guild ID is found in Discord by right-clicking your server → **Copy Server ID**
-> (enable Developer Mode first under Settings → Advanced).
+Values are read automatically from your `.env` file.
 
 Expected output:
 ```
@@ -226,15 +240,11 @@ Registered 2 command(s):
 
 ### 4.1 Start the local server
 
-Open a PowerShell window. You need four env vars — the Discord credentials plus the DynamoDB table name and a fake AWS region (boto3 requires one even for local endpoints):
-
 ```powershell
-$env:DISCORD_PUBLIC_KEY = "<your-public-key>"
-$env:DISCORD_TOKEN      = "<your-bot-token>"
 make server
 ```
 
-`make server` sets `DYNAMODB_TABLE`, `DYNAMODB_ENDPOINT`, and fake AWS credentials automatically. You only need to supply the two Discord env vars. `DYNAMODB_ENDPOINT` tells the bot to send DynamoDB requests to your local container instead of AWS.
+Discord credentials are loaded automatically from your `.env` file. `make server` sets `DYNAMODB_TABLE`, `DYNAMODB_ENDPOINT`, and fake AWS credentials for the local DynamoDB container.
 
 > Make sure DynamoDB Local is running (Part 3.2) before starting the server.
 

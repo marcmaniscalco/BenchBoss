@@ -259,7 +259,7 @@ def _send_help_dm(user_id: str, bot_token: str) -> None:
         headers=headers,
     )
     if not resp.ok:
-        logger.warning("Failed to open DM channel for user %s", user_id)
+        logger.warning("Failed to open DM channel for user %s: %s %s", user_id, resp.status_code, resp.text)
         return
     channel_id = resp.json().get("id")
     if not channel_id:
