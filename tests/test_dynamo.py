@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bench_boss.dynamo import _ttl_timestamp, delete_event, get_event, save_event, update_rsvp
+from bench_boss.dynamo import _ttl_timestamp, delete_event, get_event, remove_rsvp, save_event, set_rsvp, update_rsvp
 
 
 @pytest.fixture()
@@ -122,6 +122,83 @@ def _make_event(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+# ---------------------------------------------------------------------------
+# set_rsvp
+# ---------------------------------------------------------------------------
+
+
+class TestSetRsvp:
+    def test_adds_user_to_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = set_rsvp("key1", "user1", "accepted")
+        assert "user1" in result["accepted"]
+
+    def test_always_adds_even_if_already_in_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        result = set_rsvp("key1", "user1", "accepted")
+        assert "user1" in result["accepted"]
+
+    def test_moves_user_from_old_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(declined=["user1"])}
+        result = set_rsvp("key1", "user1", "tentative")
+        assert "user1" not in result["declined"]
+        assert "user1" in result["tentative"]
+
+    def test_user_appears_in_only_one_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        result = set_rsvp("key1", "user1", "declined")
+        counts = sum("user1" in result.get(a, []) for a in ("accepted", "declined", "tentative"))
+        assert counts == 1
+
+    def test_raises_when_event_not_found(self, mock_table):
+        mock_table.get_item.return_value = {}
+        with pytest.raises(ValueError):
+            set_rsvp("missing", "user1", "accepted")
+
+    def test_saves_updated_event_to_dynamo(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        set_rsvp("key1", "user1", "accepted")
+        mock_table.put_item.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# remove_rsvp
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveRsvp:
+    def test_removes_user_from_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        result = remove_rsvp("key1", "user1")
+        assert "user1" not in result["accepted"]
+
+    def test_user_absent_from_all_actions_after_remove(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(tentative=["user1"])}
+        result = remove_rsvp("key1", "user1")
+        for a in ("accepted", "declined", "tentative"):
+            assert "user1" not in result.get(a, [])
+
+    def test_no_error_when_user_not_in_any_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = remove_rsvp("key1", "user1")
+        assert result["accepted"] == []
+
+    def test_raises_when_event_not_found(self, mock_table):
+        mock_table.get_item.return_value = {}
+        with pytest.raises(ValueError):
+            remove_rsvp("missing", "user1")
+
+    def test_saves_updated_event_to_dynamo(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        remove_rsvp("key1", "user1")
+        mock_table.put_item.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# update_rsvp
+# ---------------------------------------------------------------------------
 
 
 class TestUpdateRsvp:

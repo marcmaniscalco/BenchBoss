@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from bench_boss.discord_api import BLURPLE, build_event_embed, build_rsvp_components
+from bench_boss.discord_api import BLURPLE, build_edit_prompt_embed, build_event_embed, build_rsvp_components
 
 START = datetime(2026, 4, 5, 19, 0, tzinfo=UTC)
 END = START + timedelta(hours=1)
@@ -134,7 +134,7 @@ class TestBuildRsvpComponents:
             "rsvp:declined:key1",
             "rsvp:tentative:key1",
             "delete:key1",
-            "help",
+            "edit:key1",
         }
 
     def test_delete_button_has_danger_style(self):
@@ -180,17 +180,50 @@ class TestBuildRsvpComponents:
         )
         assert btn["style"] == 2
 
-    def test_help_button_has_primary_style(self):
+    def test_edit_button_has_primary_style(self):
         components = build_rsvp_components("key1")
-        help_btn = next(b for b in components[0]["components"] if b["custom_id"] == "help")
-        assert help_btn["style"] == 1
+        edit_btn = next(b for b in components[0]["components"] if b["custom_id"] == "edit:key1")
+        assert edit_btn["style"] == 1
 
-    def test_help_button_label(self):
+    def test_edit_button_label(self):
         components = build_rsvp_components("key1")
-        help_btn = next(b for b in components[0]["components"] if b["custom_id"] == "help")
-        assert help_btn["label"] == "Commands"
+        edit_btn = next(b for b in components[0]["components"] if b["custom_id"] == "edit:key1")
+        assert edit_btn["label"] == "Edit"
 
-    def test_help_button_has_no_emoji(self):
+    def test_edit_button_has_no_emoji(self):
         components = build_rsvp_components("key1")
-        help_btn = next(b for b in components[0]["components"] if b["custom_id"] == "help")
-        assert "emoji" not in help_btn
+        edit_btn = next(b for b in components[0]["components"] if b["custom_id"] == "edit:key1")
+        assert "emoji" not in edit_btn
+
+
+# ---------------------------------------------------------------------------
+# build_edit_prompt_embed
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEditPromptEmbed:
+    def test_has_description(self):
+        embed = build_edit_prompt_embed()
+        assert "description" in embed
+
+    def test_description_title_is_bold(self):
+        embed = build_edit_prompt_embed()
+        assert "**What would you like to do?**" in embed["description"]
+
+    def test_description_has_bold_numbered_add_option(self):
+        embed = build_edit_prompt_embed()
+        assert "**1.**" in embed["description"]
+        assert "Add" in embed["description"]
+
+    def test_description_has_bold_numbered_remove_option(self):
+        embed = build_edit_prompt_embed()
+        assert "**2.**" in embed["description"]
+        assert "Remove" in embed["description"]
+
+    def test_description_has_selection_prompt(self):
+        embed = build_edit_prompt_embed()
+        assert "Enter a number to select an option" in embed["description"]
+
+    def test_has_color(self):
+        embed = build_edit_prompt_embed()
+        assert "color" in embed

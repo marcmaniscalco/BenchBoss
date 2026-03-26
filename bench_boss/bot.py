@@ -13,7 +13,7 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.discord_api import build_event_embed, build_rsvp_components
+from bench_boss.discord_api import build_edit_prompt_embed, build_event_embed, build_rsvp_components
 from bench_boss.dynamo import delete_event, save_event, update_rsvp
 
 logger = Logger(service="bench-boss")
@@ -78,8 +78,8 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
 
     if interaction_type == MESSAGE_COMPONENT:
         custom_id = body.get("data", {}).get("custom_id", "")
-        if custom_id == "help":
-            return _handle_help(body, bot_token)
+        if custom_id.startswith("edit:"):
+            return _handle_edit(body, bot_token)
         if custom_id.startswith("delete:"):
             return _handle_delete(body, bot_token)
         return _handle_rsvp(body)
@@ -216,38 +216,22 @@ def _handle_delete(body: dict, bot_token: str) -> dict:
     return {"statusCode": 200, "body": {"type": DEFERRED_UPDATE_MESSAGE}}
 
 
-_HELP_TEXT = """**BenchBoss Commands**
-
-**`/schedule <url>`**
-Posts the next upcoming event from a webcal or https calendar URL with RSVP buttons. Members can mark themselves as accepted, declined, or tentative directly from the event card.
-"""
-
-
-def _handle_help(body: dict, bot_token: str) -> dict:
+def _handle_edit(body: dict, bot_token: str) -> dict:
     member = body.get("member") or {}
     user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
 
     if user_id and bot_token:
         threading.Thread(
-            target=_send_help_dm,
+            target=_send_edit_dm,
             args=(user_id, bot_token),
             daemon=True,
         ).start()
 
-    return {
-        "statusCode": 200,
-        "body": {
-            "type": CHANNEL_MESSAGE_WITH_SOURCE,
-            "data": {
-                "content": "📬 Command info has been sent to your DMs!",
-                "flags": 64,  # EPHEMERAL — only visible to the user who clicked
-            },
-        },
-    }
+    return _ephemeral("📬 Check your DMs!")
 
 
-def _send_help_dm(user_id: str, bot_token: str) -> None:
-    """Open a DM channel with the user and send command details."""
+def _send_edit_dm(user_id: str, bot_token: str) -> None:
+    """Open a DM channel with the user and send the RSVP edit prompt."""
     logger.debug("Opening DM channel with user %s", user_id)
     headers = {
         "Authorization": f"Bot {bot_token}",
@@ -267,13 +251,13 @@ def _send_help_dm(user_id: str, bot_token: str) -> None:
         return
     msg_resp = requests.post(
         f"https://discord.com/api/v10/channels/{channel_id}/messages",
-        json={"content": _HELP_TEXT},
+        json={"embeds": [build_edit_prompt_embed()]},
         headers=headers,
     )
     if msg_resp.ok:
-        logger.info("Help DM sent to user %s", user_id)
+        logger.info("Edit DM sent to user %s", user_id)
     else:
-        logger.warning("Failed to send help DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
+        logger.warning("Failed to send edit DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
 
 
 def _delete_original_message(app_id: str, token: str) -> None:
@@ -288,4 +272,14 @@ def _message(content: str) -> dict:
     return {
         "statusCode": 200,
         "body": {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {"content": content}},
+    }
+
+
+def _ephemeral(content: str) -> dict:
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {"content": content, "flags": 64},
+        },
     }

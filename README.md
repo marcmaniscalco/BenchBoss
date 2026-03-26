@@ -287,6 +287,27 @@ Go to your server and type `/ping`. The bot will reply **Pong!**
 
 ---
 
+## Development Guidelines
+
+### Unit Tests
+
+Whenever you add or modify code in the `bench_boss/` package, add or update the corresponding unit tests in `tests/`.
+
+- New function or method → add tests covering the happy path and edge cases
+- Modified function → update existing tests to reflect the change
+- New module `bench_boss/foo.py` → create `tests/test_foo.py`
+
+Run tests with coverage:
+```powershell
+make cov
+```
+
+### README Sync
+
+Whenever `CLAUDE.md` is updated, update this `README.md` to reflect the new or changed instructions.
+
+---
+
 ## Part 5 — Adding Commands
 
 1. Add a handler in `bot.py` inside `handle_interaction()`:

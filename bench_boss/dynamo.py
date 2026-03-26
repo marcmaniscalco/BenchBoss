@@ -69,6 +69,46 @@ def get_event(event_key: str) -> dict | None:
     return response.get("Item")
 
 
+def set_rsvp(event_key: str, user_id: str, action: str) -> dict:
+    """
+    Set a user's RSVP to a specific action without toggling.
+
+    Removes the user from any other action list and always adds them to
+    the specified one. Returns the updated event item.
+    """
+    event = get_event(event_key)
+    if event is None:
+        logger.warning("Event not found: %s", event_key)
+        raise ValueError(f"Event {event_key!r} not found")
+
+    for a in RSVP_ACTIONS:
+        users = list(event.get(a, []))
+        if user_id in users:
+            users.remove(user_id)
+        event[a] = users
+
+    event[action] = event.get(action, []) + [user_id]
+    _table().put_item(Item=event)
+    return event
+
+
+def remove_rsvp(event_key: str, user_id: str) -> dict:
+    """Remove a user from all RSVP lists. Returns the updated event item."""
+    event = get_event(event_key)
+    if event is None:
+        logger.warning("Event not found: %s", event_key)
+        raise ValueError(f"Event {event_key!r} not found")
+
+    for a in RSVP_ACTIONS:
+        users = list(event.get(a, []))
+        if user_id in users:
+            users.remove(user_id)
+        event[a] = users
+
+    _table().put_item(Item=event)
+    return event
+
+
 def update_rsvp(event_key: str, user_id: str, action: str) -> dict:
     """
     Toggle a user's RSVP for an event.

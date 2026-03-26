@@ -13,6 +13,10 @@ Tests use `pytest`. Run with:
 make cov
 ```
 
+## README Sync
+
+Whenever `CLAUDE.md` is updated, you must also update `README.md` to reflect the new or changed instructions without being asked.
+
 ## Linting and Formatting
 
 This project uses `ruff` for both linting and formatting.

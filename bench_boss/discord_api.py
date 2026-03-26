@@ -115,10 +115,18 @@ def build_rsvp_components(event_key: str) -> list[dict]:
         {
             "type": 2,
             "style": 1,  # PRIMARY (blue)
-            "label": "Commands",
-            "custom_id": "help",
+            "label": "Edit",
+            "custom_id": f"edit:{event_key}",
         }
     )
     return [
         {"type": 1, "components": buttons},
     ]
+
+
+def build_edit_prompt_embed() -> dict:
+    """Return the embed for the RSVP edit DM prompt."""
+    return {
+        "description": "**What would you like to do?**\n\n**1.** Add a response\n**2.** Remove a response\n\nEnter a number to select an option",
+        "color": BLURPLE,
+    }
