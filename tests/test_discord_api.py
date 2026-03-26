@@ -112,25 +112,19 @@ class TestBuildEventEmbed:
 
 
 class TestBuildRsvpComponents:
-    def test_returns_two_action_rows(self):
+    def test_returns_one_action_row(self):
         components = build_rsvp_components("key1")
-        assert len(components) == 2
-        assert all(row["type"] == 1 for row in components)
+        assert len(components) == 1
+        assert components[0]["type"] == 1
 
-    def test_first_row_has_four_buttons(self):
+    def test_row_has_five_buttons(self):
         components = build_rsvp_components("key1")
-        assert len(components[0]["components"]) == 4
+        assert len(components[0]["components"]) == 5
 
     def test_all_buttons_are_type_2(self):
         components = build_rsvp_components("key1")
-        for row in components:
-            for btn in row["components"]:
-                assert btn["type"] == 2
-
-    def test_first_row_custom_ids_contain_event_key(self):
-        components = build_rsvp_components("my-event-key")
         for btn in components[0]["components"]:
-            assert "my-event-key" in btn["custom_id"]
+            assert btn["type"] == 2
 
     def test_custom_id_format_for_all_actions(self):
         components = build_rsvp_components("key1")
@@ -140,6 +134,7 @@ class TestBuildRsvpComponents:
             "rsvp:declined:key1",
             "rsvp:tentative:key1",
             "delete:key1",
+            "help",
         }
 
     def test_delete_button_has_danger_style(self):
@@ -156,25 +151,27 @@ class TestBuildRsvpComponents:
         )
         assert delete_btn["label"] == "Delete"
 
-    def test_rsvp_buttons_have_icon_only_labels(self):
+    def test_rsvp_buttons_use_emoji_field(self):
         components = build_rsvp_components("key1")
         rsvp_btns = [b for b in components[0]["components"] if b["custom_id"].startswith("rsvp:")]
         for btn in rsvp_btns:
-            assert btn["label"] in {"✅", "❌", "❔", "🕐"}
+            assert "emoji" in btn
+            assert btn["emoji"]["name"] in {"✅", "❌", "❔"}
+            assert "label" not in btn
 
-    def test_accept_button_has_success_style(self):
+    def test_accept_button_has_secondary_style(self):
         components = build_rsvp_components("key1")
         btn = next(
             b for b in components[0]["components"] if "accepted" in b["custom_id"]
         )
-        assert btn["style"] == 3
+        assert btn["style"] == 2
 
-    def test_decline_button_has_danger_style(self):
+    def test_decline_button_has_secondary_style(self):
         components = build_rsvp_components("key1")
         btn = next(
             b for b in components[0]["components"] if "declined" in b["custom_id"]
         )
-        assert btn["style"] == 4
+        assert btn["style"] == 2
 
     def test_tentative_has_secondary_style(self):
         components = build_rsvp_components("key1")
@@ -183,18 +180,17 @@ class TestBuildRsvpComponents:
         )
         assert btn["style"] == 2
 
-    def test_second_row_has_help_button(self):
+    def test_help_button_has_primary_style(self):
         components = build_rsvp_components("key1")
-        assert len(components[1]["components"]) == 1
-        help_btn = components[1]["components"][0]
-        assert help_btn["custom_id"] == "help"
+        help_btn = next(b for b in components[0]["components"] if b["custom_id"] == "help")
+        assert help_btn["style"] == 1
 
-    def test_help_button_has_secondary_style(self):
+    def test_help_button_label(self):
         components = build_rsvp_components("key1")
-        help_btn = components[1]["components"][0]
-        assert help_btn["style"] == 2
+        help_btn = next(b for b in components[0]["components"] if b["custom_id"] == "help")
+        assert help_btn["label"] == "Commands"
 
-    def test_help_button_does_not_contain_event_key(self):
-        components = build_rsvp_components("my-event-key")
-        help_btn = components[1]["components"][0]
-        assert "my-event-key" not in help_btn["custom_id"]
+    def test_help_button_has_no_emoji(self):
+        components = build_rsvp_components("key1")
+        help_btn = next(b for b in components[0]["components"] if b["custom_id"] == "help")
+        assert "emoji" not in help_btn

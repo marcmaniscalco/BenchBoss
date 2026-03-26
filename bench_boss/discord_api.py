@@ -18,8 +18,8 @@ _RSVP_ICONS = {
 
 # Discord button styles: 3=SUCCESS (green), 4=DANGER (red), 2=SECONDARY (gray)
 _RSVP_STYLES = {
-    "accepted": 3,
-    "declined": 4,
+    "accepted": 2,
+    "declined": 2,
     "tentative": 2,
 }
 
@@ -98,10 +98,10 @@ def build_rsvp_components(event_key: str) -> list[dict]:
         {
             "type": 2,  # BUTTON
             "style": _RSVP_STYLES[action],
-            "label": label,
+            "emoji": {"name": emoji},
             "custom_id": f"rsvp:{action}:{event_key}",
         }
-        for action, label in _RSVP_ICONS.items()
+        for action, emoji in _RSVP_ICONS.items()
     ]
     buttons.append(
         {
@@ -111,13 +111,14 @@ def build_rsvp_components(event_key: str) -> list[dict]:
             "custom_id": f"delete:{event_key}",
         }
     )
-    help_button = {
-        "type": 2,
-        "style": 2,  # SECONDARY (gray)
-        "label": "📖 Commands",
-        "custom_id": "help",
-    }
+    buttons.append(
+        {
+            "type": 2,
+            "style": 1,  # PRIMARY (blue)
+            "label": "Commands",
+            "custom_id": "help",
+        }
+    )
     return [
         {"type": 1, "components": buttons},
-        {"type": 1, "components": [help_button]},
     ]

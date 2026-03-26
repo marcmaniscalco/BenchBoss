@@ -202,7 +202,7 @@ class TestScheduleInteraction:
         embed = result["body"]["data"]["embeds"][0]
         assert embed["title"] == "Sprint Review"
 
-    def test_components_have_four_buttons(self):
+    def test_components_have_five_buttons(self):
         event = make_calendar_event()
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
@@ -214,7 +214,7 @@ class TestScheduleInteraction:
             )
 
         buttons = result["body"]["data"]["components"][0]["components"]
-        assert len(buttons) == 4
+        assert len(buttons) == 5
 
     def test_only_next_event_is_used(self):
         events = [
