@@ -301,8 +301,11 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         if not user_id:
             return _ephemeral("Could not find that user — try again with their @mention or numeric ID.")
 
+    _ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative"}
+
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
+        action = _ACTION_ALIASES.get(action, action)
         if action not in RSVP_ACTIONS:
             return _ephemeral("Invalid RSVP status — use: accepted, declined, or tentative.")
         try:

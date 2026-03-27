@@ -713,6 +713,30 @@ class TestRsvpEditModalSubmit:
         assert result["body"]["data"]["flags"] == 64
         assert "Could not find" in result["body"]["data"]["content"]
 
+    def test_single_letter_a_maps_to_accepted(self):
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot.threading.Thread"),
+        ):
+            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "a"), bot_token="tok")
+        mock_set.assert_called_once_with("key1", "123456789", "accepted")
+
+    def test_single_letter_d_maps_to_declined(self):
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot.threading.Thread"),
+        ):
+            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "d"), bot_token="tok")
+        mock_set.assert_called_once_with("key1", "123456789", "declined")
+
+    def test_single_letter_t_maps_to_tentative(self):
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot.threading.Thread"),
+        ):
+            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "t"), bot_token="tok")
+        mock_set.assert_called_once_with("key1", "123456789", "tentative")
+
     def test_invalid_action_returns_ephemeral_error(self):
         with patch("bench_boss.bot.set_rsvp"):
             result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "bad"), bot_token="tok")

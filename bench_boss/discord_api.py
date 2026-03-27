@@ -155,12 +155,14 @@ def build_add_rsvp_modal(event_key: str) -> dict:
                 "type": 1,
                 "components": [
                     {
-                        "type": 4,
+                        "type": 4,  # TEXT_INPUT
                         "custom_id": "action",
                         "label": "RSVP Status",
-                        "style": 1,
-                        "placeholder": "accepted / declined / tentative",
+                        "style": 1,  # SHORT
+                        "placeholder": "accepted / declined / tentative  (or a / d / t)",
                         "required": True,
+                        "min_length": 1,
+                        "max_length": 8,
                     }
                 ],
             },
