@@ -1,6 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
-from bench_boss.discord_api import BLURPLE, build_edit_prompt_embed, build_event_embed, build_rsvp_components
+from bench_boss.discord_api import (
+    BLURPLE,
+    build_add_rsvp_modal,
+    build_edit_dm_components,
+    build_edit_prompt_embed,
+    build_event_embed,
+    build_remove_rsvp_modal,
+    build_rsvp_components,
+)
 
 START = datetime(2026, 4, 5, 19, 0, tzinfo=UTC)
 END = START + timedelta(hours=1)
@@ -220,10 +228,79 @@ class TestBuildEditPromptEmbed:
         assert "**2.**" in embed["description"]
         assert "Remove" in embed["description"]
 
-    def test_description_has_selection_prompt(self):
+    def test_description_has_no_plain_text_prompt(self):
         embed = build_edit_prompt_embed()
-        assert "Enter a number to select an option" in embed["description"]
+        assert "Enter a number" not in embed["description"]
 
     def test_has_color(self):
         embed = build_edit_prompt_embed()
         assert "color" in embed
+
+
+# ---------------------------------------------------------------------------
+# build_edit_dm_components
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEditDmComponents:
+    def test_returns_one_action_row(self):
+        components = build_edit_dm_components("key1")
+        assert len(components) == 1
+        assert components[0]["type"] == 1
+
+    def test_row_has_two_buttons(self):
+        components = build_edit_dm_components("key1")
+        assert len(components[0]["components"]) == 2
+
+    def test_add_button_custom_id(self):
+        components = build_edit_dm_components("key1")
+        ids = {b["custom_id"] for b in components[0]["components"]}
+        assert "add_rsvp:key1" in ids
+
+    def test_remove_button_custom_id(self):
+        components = build_edit_dm_components("key1")
+        ids = {b["custom_id"] for b in components[0]["components"]}
+        assert "remove_rsvp:key1" in ids
+
+    def test_add_button_is_primary(self):
+        components = build_edit_dm_components("key1")
+        add_btn = next(b for b in components[0]["components"] if "add_rsvp" in b["custom_id"])
+        assert add_btn["style"] == 1
+
+    def test_remove_button_is_danger(self):
+        components = build_edit_dm_components("key1")
+        remove_btn = next(b for b in components[0]["components"] if "remove_rsvp" in b["custom_id"])
+        assert remove_btn["style"] == 4
+
+
+# ---------------------------------------------------------------------------
+# build_add_rsvp_modal / build_remove_rsvp_modal
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAddRsvpModal:
+    def test_custom_id_contains_event_key(self):
+        assert "key1" in build_add_rsvp_modal("key1")["custom_id"]
+
+    def test_has_title(self):
+        assert "title" in build_add_rsvp_modal("key1")
+
+    def test_has_user_and_action_inputs(self):
+        modal = build_add_rsvp_modal("key1")
+        input_ids = {comp["custom_id"] for row in modal["components"] for comp in row["components"]}
+        assert "user" in input_ids
+        assert "action" in input_ids
+
+
+class TestBuildRemoveRsvpModal:
+    def test_custom_id_contains_event_key(self):
+        assert "key1" in build_remove_rsvp_modal("key1")["custom_id"]
+
+    def test_has_title(self):
+        assert "title" in build_remove_rsvp_modal("key1")
+
+    def test_has_user_input_only(self):
+        modal = build_remove_rsvp_modal("key1")
+        input_ids = {comp["custom_id"] for row in modal["components"] for comp in row["components"]}
+        assert "user" in input_ids
+        assert "action" not in input_ids

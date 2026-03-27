@@ -13,8 +13,15 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.discord_api import build_edit_prompt_embed, build_event_embed, build_rsvp_components
-from bench_boss.dynamo import delete_event, save_event, update_rsvp
+from bench_boss.discord_api import (
+    build_add_rsvp_modal,
+    build_edit_dm_components,
+    build_edit_prompt_embed,
+    build_event_embed,
+    build_remove_rsvp_modal,
+    build_rsvp_components,
+)
+from bench_boss.dynamo import RSVP_ACTIONS, delete_event, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
 
 logger = Logger(service="bench-boss")
 
@@ -22,12 +29,14 @@ logger = Logger(service="bench-boss")
 PING = 1
 APPLICATION_COMMAND = 2
 MESSAGE_COMPONENT = 3
+MODAL_SUBMIT = 5
 
 # Response types
 PONG = 1
 CHANNEL_MESSAGE_WITH_SOURCE = 4
 DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7
+MODAL = 9
 
 
 def verify_signature(
@@ -66,7 +75,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             options = {
                 o["name"]: o["value"] for o in body.get("data", {}).get("options", [])
             }
-            return _handle_schedule(options.get("url", ""))
+            return _handle_schedule(options.get("url", ""), guild_id=body.get("guild_id"))
 
         return {
             "statusCode": 200,
@@ -82,7 +91,17 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             return _handle_edit(body, bot_token)
         if custom_id.startswith("delete:"):
             return _handle_delete(body, bot_token)
+        if custom_id.startswith("add_rsvp:"):
+            return _handle_add_rsvp_button(body)
+        if custom_id.startswith("remove_rsvp:"):
+            return _handle_remove_rsvp_button(body)
         return _handle_rsvp(body)
+
+    if interaction_type == MODAL_SUBMIT:
+        custom_id = body.get("data", {}).get("custom_id", "")
+        if custom_id.startswith("add_rsvp_modal:") or custom_id.startswith("remove_rsvp_modal:"):
+            return _handle_rsvp_edit_submit(body, bot_token)
+        return {"statusCode": 400, "body": {"error": "Unhandled modal submission"}}
 
     return {"statusCode": 400, "body": {"error": "Unhandled interaction type"}}
 
@@ -93,7 +112,7 @@ def _ensure_utc_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def _handle_schedule(webcal_url: str) -> dict:
+def _handle_schedule(webcal_url: str, guild_id: str | None = None) -> dict:
     if not webcal_url:
         return _message("No calendar URL provided.")
 
@@ -118,6 +137,7 @@ def _handle_schedule(webcal_url: str) -> dict:
             end=_ensure_utc_iso(ev.end) if ev.end else None,
             location=ev.location,
             description=ev.description,
+            guild_id=guild_id,
         )
         logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
     except Exception as e:
@@ -217,21 +237,36 @@ def _handle_delete(body: dict, bot_token: str) -> dict:
 
 
 def _handle_edit(body: dict, bot_token: str) -> dict:
+    custom_id = body.get("data", {}).get("custom_id", "")
+    event_key = custom_id.split(":", 1)[1]
     member = body.get("member") or {}
     user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
+
+    channel_id = body.get("channel_id", "")
+    message_id = body.get("message", {}).get("id", "")
+    if channel_id and message_id:
+        logger.debug("Storing message ref for event %s: channel=%s message=%s", event_key, channel_id, message_id)
+        store_message_ref(event_key, channel_id, message_id)
+    else:
+        logger.warning("Edit interaction missing channel_id or message_id for event %s (channel=%r message=%r)", event_key, channel_id, message_id)
+
+    interaction_token = body.get("token", "")
+    app_id = body.get("application_id", "")
+    if interaction_token and app_id:
+        store_interaction_ref(event_key, interaction_token, app_id)
 
     if user_id and bot_token:
         threading.Thread(
             target=_send_edit_dm,
-            args=(user_id, bot_token),
+            args=(user_id, bot_token, event_key),
             daemon=True,
         ).start()
 
     return _ephemeral("📬 Check your DMs!")
 
 
-def _send_edit_dm(user_id: str, bot_token: str) -> None:
-    """Open a DM channel with the user and send the RSVP edit prompt."""
+def _send_edit_dm(user_id: str, bot_token: str, event_key: str) -> None:
+    """Open a DM channel with the user and send the RSVP edit prompt with Add/Remove buttons."""
     logger.debug("Opening DM channel with user %s", user_id)
     headers = {
         "Authorization": f"Bot {bot_token}",
@@ -251,13 +286,136 @@ def _send_edit_dm(user_id: str, bot_token: str) -> None:
         return
     msg_resp = requests.post(
         f"https://discord.com/api/v10/channels/{channel_id}/messages",
-        json={"embeds": [build_edit_prompt_embed()]},
+        json={
+            "embeds": [build_edit_prompt_embed()],
+            "components": build_edit_dm_components(event_key),
+        },
         headers=headers,
     )
     if msg_resp.ok:
-        logger.info("Edit DM sent to user %s", user_id)
+        logger.info("Edit DM sent to user %s for event %s", user_id, event_key)
     else:
         logger.warning("Failed to send edit DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
+
+
+def _handle_add_rsvp_button(body: dict) -> dict:
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    return {"statusCode": 200, "body": {"type": MODAL, "data": build_add_rsvp_modal(event_key)}}
+
+
+def _handle_remove_rsvp_button(body: dict) -> dict:
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    return {"statusCode": 200, "body": {"type": MODAL, "data": build_remove_rsvp_modal(event_key)}}
+
+
+def _parse_user_id(value: str) -> str | None:
+    """Extract a numeric Discord user ID from a mention (<@123>) or raw ID string."""
+    value = value.strip()
+    if value.startswith("<@") and value.endswith(">"):
+        value = value[2:-1].lstrip("!")
+    return value if value.isdigit() else None
+
+
+def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | None:
+    """Search a guild for a member by username. Returns the user ID or None."""
+    resp = requests.get(
+        f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
+        params={"query": query, "limit": 1},
+        headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+    )
+    if not resp.ok:
+        logger.warning("Guild member search failed for %r: %s", query, resp.status_code)
+        return None
+    members = resp.json()
+    return members[0]["user"]["id"] if members else None
+
+
+def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
+    custom_id = body.get("data", {}).get("custom_id", "")
+    modal_type, event_key = custom_id.split(":", 1)
+
+    fields = {
+        comp["custom_id"]: comp["value"]
+        for row in body.get("data", {}).get("components", [])
+        for comp in row.get("components", [])
+    }
+
+    raw_user = fields.get("user", "").strip()
+    user_id = _parse_user_id(raw_user)
+
+    if not user_id:
+        event = get_event(event_key)
+        guild_id = event.get("guild_id") if event else None
+        if guild_id and bot_token:
+            user_id = _search_guild_member(guild_id, raw_user, bot_token)
+        if not user_id:
+            return _ephemeral("Could not find that user — try again with their @mention or numeric ID.")
+
+    if modal_type == "add_rsvp_modal":
+        action = fields.get("action", "").strip().lower()
+        if action not in RSVP_ACTIONS:
+            return _ephemeral("Invalid RSVP status — use: accepted, declined, or tentative.")
+        try:
+            event = set_rsvp(event_key, user_id, action)
+        except ValueError:
+            return _ephemeral("Event not found.")
+        except Exception as e:
+            logger.error("Failed to add RSVP for event %s: %s", event_key, e)
+            return _ephemeral(f"Failed to update RSVP: {e}")
+        if bot_token:
+            threading.Thread(target=_update_channel_message, args=(event, bot_token), daemon=True).start()
+        return _ephemeral(f"Added <@{user_id}> as **{action}**.")
+
+    # remove_rsvp_modal
+    try:
+        event = remove_rsvp(event_key, user_id)
+    except ValueError:
+        return _ephemeral("Event not found.")
+    except Exception as e:
+        logger.error("Failed to remove RSVP for event %s: %s", event_key, e)
+        return _ephemeral(f"Failed to remove RSVP: {e}")
+    if bot_token:
+        threading.Thread(target=_update_channel_message, args=(event, bot_token), daemon=True).start()
+    return _ephemeral(f"Removed <@{user_id}> from the RSVP.")
+
+
+def _update_channel_message(event: dict, bot_token: str) -> None:
+    """PATCH the original channel event message with the current RSVP state."""
+    channel_id = event.get("channel_id")
+    message_id = event.get("message_id")
+    if not channel_id or not message_id:
+        logger.warning("Skipping channel update for event %s — no message ref stored (channel=%r message=%r)", event.get("event_key"), channel_id, message_id)
+        return
+
+    start = datetime.fromisoformat(event["start"])
+    end = datetime.fromisoformat(event["end"]) if event.get("end") else None
+    embed = build_event_embed(
+        name=event["name"],
+        start=start,
+        end=end,
+        location=event.get("location"),
+        description=event.get("description"),
+        accepted=event.get("accepted", []),
+        declined=event.get("declined", []),
+        tentative=event.get("tentative", []),
+    )
+    event_key = event["event_key"]
+    components = build_rsvp_components(event_key)
+
+    interaction_token = event.get("interaction_token")
+    app_id = event.get("app_id")
+    if interaction_token and app_id and message_id:
+        url = f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/{message_id}"
+        headers = {"Content-Type": "application/json"}
+    else:
+        url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
+        headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+
+    resp = requests.patch(url, json={"embeds": [embed], "components": components}, headers=headers)
+    if resp.ok:
+        logger.info("Updated channel message for event %s", event_key)
+    else:
+        logger.warning("Failed to update channel message for event %s: %s %s", event_key, resp.status_code, resp.text)
 
 
 def _delete_original_message(app_id: str, token: str) -> None:

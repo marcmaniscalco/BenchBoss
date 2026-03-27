@@ -36,6 +36,7 @@ def save_event(
     end: str | None,
     location: str | None,
     description: str | None,
+    guild_id: str | None = None,
 ) -> None:
     """Persist a new event with empty RSVP lists."""
     logger.debug("Saving event %s (%r)", event_key, name)
@@ -54,7 +55,27 @@ def save_event(
         item["location"] = location
     if description is not None:
         item["description"] = description
+    if guild_id is not None:
+        item["guild_id"] = guild_id
     _table().put_item(Item=item)
+
+
+def store_message_ref(event_key: str, channel_id: str, message_id: str) -> None:
+    """Persist the Discord channel/message IDs on the event for future channel updates."""
+    _table().update_item(
+        Key={"event_key": event_key},
+        UpdateExpression="SET channel_id = :c, message_id = :m",
+        ExpressionAttributeValues={":c": channel_id, ":m": message_id},
+    )
+
+
+def store_interaction_ref(event_key: str, interaction_token: str, app_id: str) -> None:
+    """Persist the Edit-button interaction token and app ID for webhook-based message edits."""
+    _table().update_item(
+        Key={"event_key": event_key},
+        UpdateExpression="SET interaction_token = :t, app_id = :a",
+        ExpressionAttributeValues={":t": interaction_token, ":a": app_id},
+    )
 
 
 def delete_event(event_key: str) -> None:

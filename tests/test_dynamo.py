@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bench_boss.dynamo import _ttl_timestamp, delete_event, get_event, remove_rsvp, save_event, set_rsvp, update_rsvp
+from bench_boss.dynamo import _ttl_timestamp, delete_event, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
 
 
 @pytest.fixture()
@@ -73,6 +73,16 @@ class TestSaveEvent:
         assert item["location"] == "Room 1"
         assert item["description"] == "Fun event"
 
+    def test_stores_guild_id_when_provided(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None, guild_id="guild123")
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["guild_id"] == "guild123"
+
+    def test_omits_guild_id_when_none(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "guild_id" not in item
+
 
 # ---------------------------------------------------------------------------
 # delete_event
@@ -122,6 +132,41 @@ def _make_event(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+# ---------------------------------------------------------------------------
+# store_message_ref
+# ---------------------------------------------------------------------------
+
+
+class TestStoreMessageRef:
+    def test_calls_update_item_with_event_key(self, mock_table):
+        store_message_ref("key1", "ch1", "msg1")
+        mock_table.update_item.assert_called_once()
+        key = mock_table.update_item.call_args[1]["Key"]
+        assert key == {"event_key": "key1"}
+
+    def test_sets_channel_id_and_message_id(self, mock_table):
+        store_message_ref("key1", "ch42", "msg99")
+        kwargs = mock_table.update_item.call_args[1]
+        values = kwargs["ExpressionAttributeValues"]
+        assert values[":c"] == "ch42"
+        assert values[":m"] == "msg99"
+
+
+class TestStoreInteractionRef:
+    def test_calls_update_item_with_event_key(self, mock_table):
+        store_interaction_ref("key1", "tok123", "app456")
+        mock_table.update_item.assert_called_once()
+        key = mock_table.update_item.call_args[1]["Key"]
+        assert key == {"event_key": "key1"}
+
+    def test_sets_interaction_token_and_app_id(self, mock_table):
+        store_interaction_ref("key1", "mytoken", "myapp")
+        kwargs = mock_table.update_item.call_args[1]
+        values = kwargs["ExpressionAttributeValues"]
+        assert values[":t"] == "mytoken"
+        assert values[":a"] == "myapp"
 
 
 # ---------------------------------------------------------------------------

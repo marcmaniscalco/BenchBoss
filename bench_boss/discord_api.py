@@ -127,6 +127,88 @@ def build_rsvp_components(event_key: str) -> list[dict]:
 def build_edit_prompt_embed() -> dict:
     """Return the embed for the RSVP edit DM prompt."""
     return {
-        "description": "**What would you like to do?**\n\n**1.** Add a response\n**2.** Remove a response\n\nEnter a number to select an option",
+        "description": "**What would you like to do?**\n\n**1.** Add a response\n**2.** Remove a response",
         "color": BLURPLE,
+    }
+
+
+def build_edit_dm_components(event_key: str) -> list[dict]:
+    """Return an action row with Add and Remove buttons for the edit DM."""
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 1,  # PRIMARY (blue)
+                    "label": "1. Add a response",
+                    "custom_id": f"add_rsvp:{event_key}",
+                },
+                {
+                    "type": 2,
+                    "style": 4,  # DANGER (red)
+                    "label": "2. Remove a response",
+                    "custom_id": f"remove_rsvp:{event_key}",
+                },
+            ],
+        }
+    ]
+
+
+def build_add_rsvp_modal(event_key: str) -> dict:
+    """Return the modal data for adding a user to the RSVP."""
+    return {
+        "custom_id": f"add_rsvp_modal:{event_key}",
+        "title": "Add a response",
+        "components": [
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 4,  # TEXT_INPUT
+                        "custom_id": "user",
+                        "label": "User",
+                        "style": 1,  # SHORT
+                        "placeholder": "@username or user ID",
+                        "required": True,
+                    }
+                ],
+            },
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 4,
+                        "custom_id": "action",
+                        "label": "RSVP Status",
+                        "style": 1,
+                        "placeholder": "accepted / declined / tentative",
+                        "required": True,
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def build_remove_rsvp_modal(event_key: str) -> dict:
+    """Return the modal data for removing a user from the RSVP."""
+    return {
+        "custom_id": f"remove_rsvp_modal:{event_key}",
+        "title": "Remove a response",
+        "components": [
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 4,
+                        "custom_id": "user",
+                        "label": "User",
+                        "style": 1,
+                        "placeholder": "@username or user ID",
+                        "required": True,
+                    }
+                ],
+            },
+        ],
     }
