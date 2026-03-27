@@ -3,8 +3,6 @@ from datetime import UTC, datetime, timedelta
 from bench_boss.discord_api import (
     BLURPLE,
     build_add_rsvp_modal,
-    build_edit_dm_components,
-    build_edit_prompt_embed,
     build_event_embed,
     build_remove_rsvp_modal,
     build_rsvp_components,
@@ -120,21 +118,21 @@ class TestBuildEventEmbed:
 
 
 class TestBuildRsvpComponents:
-    def test_returns_one_action_row(self):
+    def test_returns_two_action_rows(self):
         components = build_rsvp_components("key1")
-        assert len(components) == 1
+        assert len(components) == 2
         assert components[0]["type"] == 1
+        assert components[1]["type"] == 1
 
-    def test_row_has_five_buttons(self):
+    def test_row1_has_four_buttons(self):
         components = build_rsvp_components("key1")
-        assert len(components[0]["components"]) == 5
+        assert len(components[0]["components"]) == 4
 
-    def test_all_buttons_are_type_2(self):
+    def test_row2_has_two_buttons(self):
         components = build_rsvp_components("key1")
-        for btn in components[0]["components"]:
-            assert btn["type"] == 2
+        assert len(components[1]["components"]) == 2
 
-    def test_custom_id_format_for_all_actions(self):
+    def test_row1_custom_ids(self):
         components = build_rsvp_components("key1")
         custom_ids = {btn["custom_id"] for btn in components[0]["components"]}
         assert custom_ids == {
@@ -142,8 +140,21 @@ class TestBuildRsvpComponents:
             "rsvp:declined:key1",
             "rsvp:tentative:key1",
             "delete:key1",
-            "edit:key1",
         }
+
+    def test_row2_custom_ids(self):
+        components = build_rsvp_components("key1")
+        custom_ids = {btn["custom_id"] for btn in components[1]["components"]}
+        assert custom_ids == {"add_rsvp:key1", "remove_rsvp:key1"}
+
+    def test_no_edit_button(self):
+        components = build_rsvp_components("key1")
+        all_ids = [
+            btn["custom_id"]
+            for row in components
+            for btn in row["components"]
+        ]
+        assert not any("edit:" in cid for cid in all_ids)
 
     def test_delete_button_has_danger_style(self):
         components = build_rsvp_components("key1")
@@ -169,108 +180,28 @@ class TestBuildRsvpComponents:
 
     def test_accept_button_has_secondary_style(self):
         components = build_rsvp_components("key1")
-        btn = next(
-            b for b in components[0]["components"] if "accepted" in b["custom_id"]
-        )
+        btn = next(b for b in components[0]["components"] if "accepted" in b["custom_id"])
         assert btn["style"] == 2
 
     def test_decline_button_has_secondary_style(self):
         components = build_rsvp_components("key1")
-        btn = next(
-            b for b in components[0]["components"] if "declined" in b["custom_id"]
-        )
+        btn = next(b for b in components[0]["components"] if "declined" in b["custom_id"])
         assert btn["style"] == 2
 
     def test_tentative_has_secondary_style(self):
         components = build_rsvp_components("key1")
-        btn = next(
-            b for b in components[0]["components"] if "tentative" in b["custom_id"]
-        )
+        btn = next(b for b in components[0]["components"] if "tentative" in b["custom_id"])
         assert btn["style"] == 2
 
-    def test_edit_button_has_primary_style(self):
+    def test_add_response_button_is_primary(self):
         components = build_rsvp_components("key1")
-        edit_btn = next(b for b in components[0]["components"] if b["custom_id"] == "edit:key1")
-        assert edit_btn["style"] == 1
+        btn = next(b for b in components[1]["components"] if b["custom_id"] == "add_rsvp:key1")
+        assert btn["style"] == 1
 
-    def test_edit_button_label(self):
+    def test_remove_response_button_is_danger(self):
         components = build_rsvp_components("key1")
-        edit_btn = next(b for b in components[0]["components"] if b["custom_id"] == "edit:key1")
-        assert edit_btn["label"] == "Edit"
-
-    def test_edit_button_has_no_emoji(self):
-        components = build_rsvp_components("key1")
-        edit_btn = next(b for b in components[0]["components"] if b["custom_id"] == "edit:key1")
-        assert "emoji" not in edit_btn
-
-
-# ---------------------------------------------------------------------------
-# build_edit_prompt_embed
-# ---------------------------------------------------------------------------
-
-
-class TestBuildEditPromptEmbed:
-    def test_has_description(self):
-        embed = build_edit_prompt_embed()
-        assert "description" in embed
-
-    def test_description_title_is_bold(self):
-        embed = build_edit_prompt_embed()
-        assert "**What would you like to do?**" in embed["description"]
-
-    def test_description_has_bold_numbered_add_option(self):
-        embed = build_edit_prompt_embed()
-        assert "**1.**" in embed["description"]
-        assert "Add" in embed["description"]
-
-    def test_description_has_bold_numbered_remove_option(self):
-        embed = build_edit_prompt_embed()
-        assert "**2.**" in embed["description"]
-        assert "Remove" in embed["description"]
-
-    def test_description_has_no_plain_text_prompt(self):
-        embed = build_edit_prompt_embed()
-        assert "Enter a number" not in embed["description"]
-
-    def test_has_color(self):
-        embed = build_edit_prompt_embed()
-        assert "color" in embed
-
-
-# ---------------------------------------------------------------------------
-# build_edit_dm_components
-# ---------------------------------------------------------------------------
-
-
-class TestBuildEditDmComponents:
-    def test_returns_one_action_row(self):
-        components = build_edit_dm_components("key1")
-        assert len(components) == 1
-        assert components[0]["type"] == 1
-
-    def test_row_has_two_buttons(self):
-        components = build_edit_dm_components("key1")
-        assert len(components[0]["components"]) == 2
-
-    def test_add_button_custom_id(self):
-        components = build_edit_dm_components("key1")
-        ids = {b["custom_id"] for b in components[0]["components"]}
-        assert "add_rsvp:key1" in ids
-
-    def test_remove_button_custom_id(self):
-        components = build_edit_dm_components("key1")
-        ids = {b["custom_id"] for b in components[0]["components"]}
-        assert "remove_rsvp:key1" in ids
-
-    def test_add_button_is_primary(self):
-        components = build_edit_dm_components("key1")
-        add_btn = next(b for b in components[0]["components"] if "add_rsvp" in b["custom_id"])
-        assert add_btn["style"] == 1
-
-    def test_remove_button_is_danger(self):
-        components = build_edit_dm_components("key1")
-        remove_btn = next(b for b in components[0]["components"] if "remove_rsvp" in b["custom_id"])
-        assert remove_btn["style"] == 4
+        btn = next(b for b in components[1]["components"] if b["custom_id"] == "remove_rsvp:key1")
+        assert btn["style"] == 4
 
 
 # ---------------------------------------------------------------------------

@@ -93,8 +93,8 @@ def build_event_embed(
 
 
 def build_rsvp_components(event_key: str) -> list[dict]:
-    """Return two action rows: RSVP/delete buttons and a help button."""
-    buttons = [
+    """Return two action rows: RSVP/delete buttons and add/remove buttons."""
+    rsvp_buttons = [
         {
             "type": 2,  # BUTTON
             "style": _RSVP_STYLES[action],
@@ -103,7 +103,7 @@ def build_rsvp_components(event_key: str) -> list[dict]:
         }
         for action, emoji in _RSVP_ICONS.items()
     ]
-    buttons.append(
+    rsvp_buttons.append(
         {
             "type": 2,
             "style": 4,  # DANGER (red)
@@ -111,48 +111,25 @@ def build_rsvp_components(event_key: str) -> list[dict]:
             "custom_id": f"delete:{event_key}",
         }
     )
-    buttons.append(
+    edit_buttons = [
         {
             "type": 2,
             "style": 1,  # PRIMARY (blue)
-            "label": "Edit",
-            "custom_id": f"edit:{event_key}",
-        }
-    )
-    return [
-        {"type": 1, "components": buttons},
-    ]
-
-
-def build_edit_prompt_embed() -> dict:
-    """Return the embed for the RSVP edit DM prompt."""
-    return {
-        "description": "**What would you like to do?**\n\n**1.** Add a response\n**2.** Remove a response",
-        "color": BLURPLE,
-    }
-
-
-def build_edit_dm_components(event_key: str) -> list[dict]:
-    """Return an action row with Add and Remove buttons for the edit DM."""
-    return [
+            "label": "Add Response",
+            "custom_id": f"add_rsvp:{event_key}",
+        },
         {
-            "type": 1,
-            "components": [
-                {
-                    "type": 2,
-                    "style": 1,  # PRIMARY (blue)
-                    "label": "1. Add a response",
-                    "custom_id": f"add_rsvp:{event_key}",
-                },
-                {
-                    "type": 2,
-                    "style": 4,  # DANGER (red)
-                    "label": "2. Remove a response",
-                    "custom_id": f"remove_rsvp:{event_key}",
-                },
-            ],
-        }
+            "type": 2,
+            "style": 4,  # DANGER (red)
+            "label": "Remove Response",
+            "custom_id": f"remove_rsvp:{event_key}",
+        },
     ]
+    return [
+        {"type": 1, "components": rsvp_buttons},
+        {"type": 1, "components": edit_buttons},
+    ]
+
 
 
 def build_add_rsvp_modal(event_key: str) -> dict:

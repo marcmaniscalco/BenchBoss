@@ -15,8 +15,6 @@ from nacl.signing import VerifyKey
 from bench_boss.calendar import WebCalReader
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
-    build_edit_dm_components,
-    build_edit_prompt_embed,
     build_event_embed,
     build_remove_rsvp_modal,
     build_rsvp_components,
@@ -87,8 +85,6 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
 
     if interaction_type == MESSAGE_COMPONENT:
         custom_id = body.get("data", {}).get("custom_id", "")
-        if custom_id.startswith("edit:"):
-            return _handle_edit(body, bot_token)
         if custom_id.startswith("delete:"):
             return _handle_delete(body, bot_token)
         if custom_id.startswith("add_rsvp:"):
@@ -236,75 +232,29 @@ def _handle_delete(body: dict, bot_token: str) -> dict:
     return {"statusCode": 200, "body": {"type": DEFERRED_UPDATE_MESSAGE}}
 
 
-def _handle_edit(body: dict, bot_token: str) -> dict:
-    custom_id = body.get("data", {}).get("custom_id", "")
-    event_key = custom_id.split(":", 1)[1]
-    member = body.get("member") or {}
-    user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
-
+def _store_button_refs(body: dict, event_key: str) -> None:
+    """Persist the channel/message IDs and interaction token from a button click."""
     channel_id = body.get("channel_id", "")
     message_id = body.get("message", {}).get("id", "")
     if channel_id and message_id:
-        logger.debug("Storing message ref for event %s: channel=%s message=%s", event_key, channel_id, message_id)
         store_message_ref(event_key, channel_id, message_id)
     else:
-        logger.warning("Edit interaction missing channel_id or message_id for event %s (channel=%r message=%r)", event_key, channel_id, message_id)
-
+        logger.warning("Button interaction missing channel_id or message_id for event %s", event_key)
     interaction_token = body.get("token", "")
     app_id = body.get("application_id", "")
     if interaction_token and app_id:
         store_interaction_ref(event_key, interaction_token, app_id)
 
-    if user_id and bot_token:
-        threading.Thread(
-            target=_send_edit_dm,
-            args=(user_id, bot_token, event_key),
-            daemon=True,
-        ).start()
-
-    return _ephemeral("📬 Check your DMs!")
-
-
-def _send_edit_dm(user_id: str, bot_token: str, event_key: str) -> None:
-    """Open a DM channel with the user and send the RSVP edit prompt with Add/Remove buttons."""
-    logger.debug("Opening DM channel with user %s", user_id)
-    headers = {
-        "Authorization": f"Bot {bot_token}",
-        "Content-Type": "application/json",
-    }
-    resp = requests.post(
-        "https://discord.com/api/v10/users/@me/channels",
-        json={"recipient_id": user_id},
-        headers=headers,
-    )
-    if not resp.ok:
-        logger.warning("Failed to open DM channel for user %s: %s %s", user_id, resp.status_code, resp.text)
-        return
-    channel_id = resp.json().get("id")
-    if not channel_id:
-        logger.warning("No channel ID in DM response for user %s", user_id)
-        return
-    msg_resp = requests.post(
-        f"https://discord.com/api/v10/channels/{channel_id}/messages",
-        json={
-            "embeds": [build_edit_prompt_embed()],
-            "components": build_edit_dm_components(event_key),
-        },
-        headers=headers,
-    )
-    if msg_resp.ok:
-        logger.info("Edit DM sent to user %s for event %s", user_id, event_key)
-    else:
-        logger.warning("Failed to send edit DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
-
 
 def _handle_add_rsvp_button(body: dict) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    _store_button_refs(body, event_key)
     return {"statusCode": 200, "body": {"type": MODAL, "data": build_add_rsvp_modal(event_key)}}
 
 
 def _handle_remove_rsvp_button(body: dict) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    _store_button_refs(body, event_key)
     return {"statusCode": 200, "body": {"type": MODAL, "data": build_remove_rsvp_modal(event_key)}}
 
 

@@ -17,7 +17,6 @@ from bench_boss.bot import (
     PONG,
     UPDATE_MESSAGE,
     _delete_original_message,
-    _send_edit_dm,
     _update_channel_message,
     handle_interaction,
     verify_signature,
@@ -207,7 +206,7 @@ class TestScheduleInteraction:
         embed = result["body"]["data"]["embeds"][0]
         assert embed["title"] == "Sprint Review"
 
-    def test_components_have_five_buttons(self):
+    def test_components_have_two_action_rows(self):
         event = make_calendar_event()
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
@@ -218,8 +217,10 @@ class TestScheduleInteraction:
                 make_schedule_body("https://example.com/cal.ics")
             )
 
-        buttons = result["body"]["data"]["components"][0]["components"]
-        assert len(buttons) == 5
+        components = result["body"]["data"]["components"]
+        assert len(components) == 2
+        assert len(components[0]["components"]) == 4
+        assert len(components[1]["components"]) == 2
 
     def test_only_next_event_is_used(self):
         events = [
@@ -505,200 +506,6 @@ class TestDeleteOriginalMessage:
 # ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# handle_interaction — edit button
-# ---------------------------------------------------------------------------
-
-
-def make_edit_body(event_key: str = "test-key", channel_id: str = "chan1", message_id: str = "msg1") -> dict:
-    body: dict = {
-        "type": MESSAGE_COMPONENT,
-        "member": {"user": {"id": "user1"}},
-        "data": {"custom_id": f"edit:{event_key}"},
-    }
-    if channel_id:
-        body["channel_id"] = channel_id
-    if message_id:
-        body["message"] = {"id": message_id}
-    return body
-
-
-class TestEditInteraction:
-    def test_edit_returns_ephemeral_message(self):
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            result = handle_interaction(make_edit_body(), bot_token="tok")
-        assert result["statusCode"] == 200
-        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
-        assert result["body"]["data"]["flags"] == 64
-
-    def test_edit_response_mentions_dms(self):
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            result = handle_interaction(make_edit_body(), bot_token="tok")
-        assert "DMs" in result["body"]["data"]["content"]
-
-    def test_edit_starts_background_thread(self):
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            handle_interaction(make_edit_body(event_key="ev1"), bot_token="mytoken")
-        mock_thread.assert_called_once()
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["target"] == _send_edit_dm
-        assert kwargs["args"] == ("user1", "mytoken", "ev1")
-
-    def test_edit_skips_thread_when_no_token(self):
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            handle_interaction(make_edit_body())
-        mock_thread.assert_not_called()
-
-    def test_edit_skips_thread_when_no_user_id(self):
-        body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "edit:test-key"}}
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            handle_interaction(body, bot_token="tok")
-        mock_thread.assert_not_called()
-
-    def test_edit_stores_message_ref_when_channel_and_message_present(self):
-        with (
-            patch("bench_boss.bot.store_message_ref") as mock_store,
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            handle_interaction(make_edit_body("ev1", channel_id="ch1", message_id="m1"), bot_token="tok")
-        mock_store.assert_called_once_with("ev1", "ch1", "m1")
-
-    def test_edit_stores_interaction_ref(self):
-        body = make_edit_body("ev1")
-        body["token"] = "int-token"
-        body["application_id"] = "app1"
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref") as mock_store,
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            handle_interaction(body, bot_token="tok")
-        mock_store.assert_called_once_with("ev1", "int-token", "app1")
-
-    def test_edit_skips_store_message_ref_when_no_channel_id(self):
-        body = {
-            "type": MESSAGE_COMPONENT,
-            "member": {"user": {"id": "user1"}},
-            "data": {"custom_id": "edit:ev1"},
-            "message": {"id": "m1"},
-        }
-        with (
-            patch("bench_boss.bot.store_message_ref") as mock_store,
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            handle_interaction(body, bot_token="tok")
-        mock_store.assert_not_called()
-
-    def test_edit_logs_warning_when_channel_or_message_missing(self):
-        body = {
-            "type": MESSAGE_COMPONENT,
-            "member": {"user": {"id": "user1"}},
-            "data": {"custom_id": "edit:ev1"},
-        }
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread"),
-            patch("bench_boss.bot.logger") as mock_logger,
-        ):
-            handle_interaction(body, bot_token="tok")
-        mock_logger.warning.assert_called()
-
-    def test_edit_user_id_from_top_level_user_in_dm(self):
-        body = {
-            "type": MESSAGE_COMPONENT,
-            "user": {"id": "dm-user"},
-            "data": {"custom_id": "edit:test-key"},
-        }
-        with (
-            patch("bench_boss.bot.store_message_ref"),
-            patch("bench_boss.bot.store_interaction_ref"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            handle_interaction(body, bot_token="tok")
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["args"] == ("dm-user", "tok", "test-key")
-
-
-class TestSendEditDm:
-    def _ok_resp(self, channel_id="chan1"):
-        return type("R", (), {"ok": True, "status_code": 200, "text": "", "json": lambda self: {"id": channel_id}})()
-
-    def test_opens_dm_channel_with_correct_user(self):
-        with patch("bench_boss.bot.requests.post", return_value=self._ok_resp()) as mock_post:
-            _send_edit_dm("user42", "mytoken", "key1")
-        assert mock_post.call_args_list[0][1]["json"] == {"recipient_id": "user42"}
-
-    def test_sends_message_to_dm_channel(self):
-        with patch("bench_boss.bot.requests.post", return_value=self._ok_resp("chan99")) as mock_post:
-            _send_edit_dm("user1", "tok", "key1")
-        assert "chan99" in mock_post.call_args_list[1][0][0]
-
-    def test_uses_bot_token_in_auth_header(self):
-        with patch("bench_boss.bot.requests.post", return_value=self._ok_resp()) as mock_post:
-            _send_edit_dm("u1", "secret-token", "key1")
-        headers = mock_post.call_args_list[0][1]["headers"]
-        assert headers["Authorization"] == "Bot secret-token"
-
-    def test_aborts_when_dm_channel_open_fails(self):
-        fail_resp = type("R", (), {"ok": False, "status_code": 403, "text": "Forbidden", "json": lambda self: {}})()
-        with patch("bench_boss.bot.requests.post", return_value=fail_resp) as mock_post:
-            _send_edit_dm("u1", "tok", "key1")
-        assert mock_post.call_count == 1
-
-    def test_dm_message_contains_embed(self):
-        with patch("bench_boss.bot.requests.post", return_value=self._ok_resp()) as mock_post:
-            _send_edit_dm("u1", "tok", "key1")
-        message_body = mock_post.call_args_list[1][1]["json"]
-        assert "embeds" in message_body
-
-    def test_dm_message_has_add_and_remove_components(self):
-        with patch("bench_boss.bot.requests.post", return_value=self._ok_resp()) as mock_post:
-            _send_edit_dm("u1", "tok", "key1")
-        message_body = mock_post.call_args_list[1][1]["json"]
-        assert "components" in message_body
-        ids = {b["custom_id"] for b in message_body["components"][0]["components"]}
-        assert "add_rsvp:key1" in ids
-        assert "remove_rsvp:key1" in ids
-
-    def test_opens_dm_channel_with_correct_user_with_event_key(self):
-        with patch("bench_boss.bot.requests.post", return_value=self._ok_resp()) as mock_post:
-            _send_edit_dm("user42", "mytoken", "ev1")
-        assert mock_post.call_args_list[0][1]["json"] == {"recipient_id": "user42"}
-
-    def test_aborts_when_dm_channel_open_fails_with_event_key(self):
-        fail_resp = type("R", (), {"ok": False, "status_code": 403, "text": "Forbidden", "json": lambda self: {}})()
-        with patch("bench_boss.bot.requests.post", return_value=fail_resp) as mock_post:
-            _send_edit_dm("u1", "tok", "key1")
-        assert mock_post.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# handle_interaction — edge cases
-# ---------------------------------------------------------------------------
-
-
 class TestHandleInteractionEdgeCases:
     def test_unknown_command_returns_message(self):
         result = handle_interaction(
@@ -717,28 +524,102 @@ class TestHandleInteractionEdgeCases:
 # ---------------------------------------------------------------------------
 
 
+def make_add_rsvp_body(event_key: str, channel_id: str = "ch1", message_id: str = "m1",
+                       token: str = "tok1", app_id: str = "app1") -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "channel_id": channel_id,
+        "message": {"id": message_id},
+        "token": token,
+        "application_id": app_id,
+        "data": {"custom_id": f"add_rsvp:{event_key}"},
+    }
+
+
 class TestAddRsvpButton:
     def test_returns_modal(self):
-        body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "add_rsvp:key1"}}
-        result = handle_interaction(body)
+        with (
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            result = handle_interaction(make_add_rsvp_body("key1"))
         assert result["body"]["type"] == MODAL
 
     def test_modal_custom_id_contains_event_key(self):
-        body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "add_rsvp:ev99"}}
-        result = handle_interaction(body)
+        with (
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            result = handle_interaction(make_add_rsvp_body("ev99"))
         assert "ev99" in result["body"]["data"]["custom_id"]
+
+    def test_stores_message_ref(self):
+        with (
+            patch("bench_boss.bot.store_message_ref") as mock_msg,
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            handle_interaction(make_add_rsvp_body("key1", channel_id="ch42", message_id="msg99"))
+        mock_msg.assert_called_once_with("key1", "ch42", "msg99")
+
+    def test_stores_interaction_ref(self):
+        with (
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref") as mock_iref,
+        ):
+            handle_interaction(make_add_rsvp_body("key1", token="mytoken", app_id="myapp"))
+        mock_iref.assert_called_once_with("key1", "mytoken", "myapp")
 
 
 class TestRemoveRsvpButton:
     def test_returns_modal(self):
-        body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "remove_rsvp:key1"}}
-        result = handle_interaction(body)
+        with (
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "remove_rsvp:key1"}}
+            result = handle_interaction(body)
         assert result["body"]["type"] == MODAL
 
     def test_modal_custom_id_contains_event_key(self):
-        body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "remove_rsvp:ev99"}}
-        result = handle_interaction(body)
+        with (
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "remove_rsvp:ev99"}}
+            result = handle_interaction(body)
         assert "ev99" in result["body"]["data"]["custom_id"]
+
+    def test_stores_message_ref(self):
+        body = {
+            "type": MESSAGE_COMPONENT,
+            "channel_id": "ch5",
+            "message": {"id": "msg5"},
+            "token": "t",
+            "application_id": "a",
+            "data": {"custom_id": "remove_rsvp:key1"},
+        }
+        with (
+            patch("bench_boss.bot.store_message_ref") as mock_msg,
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            handle_interaction(body)
+        mock_msg.assert_called_once_with("key1", "ch5", "msg5")
+
+    def test_stores_interaction_ref(self):
+        body = {
+            "type": MESSAGE_COMPONENT,
+            "channel_id": "ch5",
+            "message": {"id": "msg5"},
+            "token": "mytoken",
+            "application_id": "myapp",
+            "data": {"custom_id": "remove_rsvp:key1"},
+        }
+        with (
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref") as mock_iref,
+        ):
+            handle_interaction(body)
+        mock_iref.assert_called_once_with("key1", "mytoken", "myapp")
 
 
 # ---------------------------------------------------------------------------
