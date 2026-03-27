@@ -115,13 +115,13 @@ def build_rsvp_components(event_key: str) -> list[dict]:
         {
             "type": 2,
             "style": 1,  # PRIMARY (blue)
-            "label": "Add Response",
+            "emoji": {"name": "➕"},
             "custom_id": f"add_rsvp:{event_key}",
         },
         {
             "type": 2,
             "style": 4,  # DANGER (red)
-            "label": "Remove Response",
+            "emoji": {"name": "➖"},
             "custom_id": f"remove_rsvp:{event_key}",
         },
     ]

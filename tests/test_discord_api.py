@@ -198,10 +198,22 @@ class TestBuildRsvpComponents:
         btn = next(b for b in components[1]["components"] if b["custom_id"] == "add_rsvp:key1")
         assert btn["style"] == 1
 
+    def test_add_response_button_has_plus_emoji(self):
+        components = build_rsvp_components("key1")
+        btn = next(b for b in components[1]["components"] if b["custom_id"] == "add_rsvp:key1")
+        assert btn["emoji"]["name"] == "➕"
+        assert "label" not in btn
+
     def test_remove_response_button_is_danger(self):
         components = build_rsvp_components("key1")
         btn = next(b for b in components[1]["components"] if b["custom_id"] == "remove_rsvp:key1")
         assert btn["style"] == 4
+
+    def test_remove_response_button_has_minus_emoji(self):
+        components = build_rsvp_components("key1")
+        btn = next(b for b in components[1]["components"] if b["custom_id"] == "remove_rsvp:key1")
+        assert btn["emoji"]["name"] == "➖"
+        assert "label" not in btn
 
 
 # ---------------------------------------------------------------------------
