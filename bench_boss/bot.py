@@ -73,7 +73,12 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             options = {
                 o["name"]: o["value"] for o in body.get("data", {}).get("options", [])
             }
-            return _handle_schedule(options.get("url", ""), guild_id=body.get("guild_id"))
+            return _handle_schedule(
+                options.get("url", ""),
+                guild_id=body.get("guild_id"),
+                app_id=body.get("application_id", ""),
+                interaction_token=body.get("token", ""),
+            )
 
         if command == "events":
             options = {
@@ -114,7 +119,12 @@ def _ensure_utc_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def _handle_schedule(webcal_url: str, guild_id: str | None = None) -> dict:
+def _handle_schedule(
+    webcal_url: str,
+    guild_id: str | None = None,
+    app_id: str = "",
+    interaction_token: str = "",
+) -> dict:
     if not webcal_url:
         return _message("No calendar URL provided.")
 
@@ -140,11 +150,19 @@ def _handle_schedule(webcal_url: str, guild_id: str | None = None) -> dict:
             location=ev.location,
             description=ev.description,
             guild_id=guild_id,
+            webcal_url=webcal_url,
         )
         logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
     except Exception as e:
         logger.error("Failed to save event: %s", e)
         return _message(f"Failed to save event: {e}")
+
+    if app_id and interaction_token:
+        threading.Thread(
+            target=_fetch_and_store_message_ref,
+            args=(app_id, interaction_token, event_key),
+            daemon=True,
+        ).start()
 
     embed = build_event_embed(
         name=ev.summary,
@@ -375,6 +393,25 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         logger.info("Updated channel message for event %s", event_key)
     else:
         logger.warning("Failed to update channel message for event %s: %s %s", event_key, resp.status_code, resp.text)
+
+
+def _fetch_and_store_message_ref(app_id: str, interaction_token: str, event_key: str) -> None:
+    """Fetch the original interaction response message and persist its ID."""
+    time.sleep(0.5)  # Give Discord time to persist the message
+    resp = requests.get(
+        f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/@original"
+    )
+    if not resp.ok:
+        logger.warning("Failed to fetch original message for event %s: %s", event_key, resp.status_code)
+        return
+    data = resp.json()
+    message_id = data.get("id")
+    channel_id = data.get("channel_id")
+    if message_id and channel_id:
+        store_message_ref(event_key, channel_id, message_id)
+        logger.info("Stored message ref for event %s (channel=%s message=%s)", event_key, channel_id, message_id)
+    else:
+        logger.warning("Original message for event %s missing id or channel_id", event_key)
 
 
 def _delete_original_message(app_id: str, token: str) -> None:

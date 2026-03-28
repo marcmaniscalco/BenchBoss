@@ -17,6 +17,7 @@ from bench_boss.bot import (
     PONG,
     UPDATE_MESSAGE,
     _delete_original_message,
+    _fetch_and_store_message_ref,
     _format_event_line,
     _send_dm_events,
     _update_channel_message,
@@ -240,6 +241,38 @@ class TestScheduleInteraction:
 
         embed = result["body"]["data"]["embeds"][0]
         assert embed["title"] == "First"
+
+    def test_starts_message_ref_thread_when_app_id_and_token_present(self):
+        event = make_calendar_event()
+        body = {
+            "type": APPLICATION_COMMAND,
+            "guild_id": "g1",
+            "application_id": "app1",
+            "token": "tok1",
+            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+        }
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event"),
+            patch("bench_boss.bot.threading.Thread") as mock_thread,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            handle_interaction(body)
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["target"] == _fetch_and_store_message_ref
+        assert kwargs["args"] == ("app1", "tok1", mock_thread.call_args[1]["args"][2])
+
+    def test_no_thread_when_app_id_missing(self):
+        event = make_calendar_event()
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event"),
+            patch("bench_boss.bot.threading.Thread") as mock_thread,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            handle_interaction(make_schedule_body("https://example.com/cal.ics"))
+        mock_thread.assert_not_called()
 
     def test_save_event_called_with_event_details(self):
         event = make_calendar_event("My Event")
@@ -501,6 +534,71 @@ class TestDeleteOriginalMessage:
             _delete_original_message("app", "tok")
         mock_sleep.assert_called_once()
         assert mock_sleep.call_args[0][0] > 0
+
+
+# ---------------------------------------------------------------------------
+# _fetch_and_store_message_ref
+# ---------------------------------------------------------------------------
+
+
+class TestFetchAndStoreMessageRef:
+    def _mock_get(self, ok=True, message_id="msg1", channel_id="ch1"):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.ok = ok
+        resp.status_code = 200 if ok else 404
+        resp.json.return_value = {"id": message_id, "channel_id": channel_id}
+        return resp
+
+    def test_stores_message_ref_on_success(self):
+        with (
+            patch("bench_boss.bot.time.sleep"),
+            patch("bench_boss.bot.requests.get", return_value=self._mock_get()),
+            patch("bench_boss.bot.store_message_ref") as mock_store,
+        ):
+            _fetch_and_store_message_ref("app1", "tok1", "key1")
+        mock_store.assert_called_once_with("key1", "ch1", "msg1")
+
+    def test_fetches_correct_webhook_url(self):
+        with (
+            patch("bench_boss.bot.time.sleep"),
+            patch("bench_boss.bot.requests.get", return_value=self._mock_get()) as mock_get,
+            patch("bench_boss.bot.store_message_ref"),
+        ):
+            _fetch_and_store_message_ref("app1", "tok1", "key1")
+        url = mock_get.call_args[0][0]
+        assert "webhooks/app1/tok1/messages/@original" in url
+
+    def test_failed_get_skips_store(self):
+        with (
+            patch("bench_boss.bot.time.sleep"),
+            patch("bench_boss.bot.requests.get", return_value=self._mock_get(ok=False)),
+            patch("bench_boss.bot.store_message_ref") as mock_store,
+        ):
+            _fetch_and_store_message_ref("app1", "tok1", "key1")
+        mock_store.assert_not_called()
+
+    def test_missing_message_id_in_response_skips_store(self):
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"channel_id": "ch1"}  # no "id"
+        with (
+            patch("bench_boss.bot.time.sleep"),
+            patch("bench_boss.bot.requests.get", return_value=resp),
+            patch("bench_boss.bot.store_message_ref") as mock_store,
+        ):
+            _fetch_and_store_message_ref("app1", "tok1", "key1")
+        mock_store.assert_not_called()
+
+    def test_sleeps_before_fetching(self):
+        with (
+            patch("bench_boss.bot.time.sleep") as mock_sleep,
+            patch("bench_boss.bot.requests.get", return_value=self._mock_get()),
+            patch("bench_boss.bot.store_message_ref"),
+        ):
+            _fetch_and_store_message_ref("app1", "tok1", "key1")
+        mock_sleep.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

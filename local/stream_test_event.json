@@ -1,0 +1,20 @@
+{
+  "Records": [
+    {
+      "eventName": "REMOVE",
+      "userIdentity": {
+        "type": "Service",
+        "principalId": "dynamodb.amazonaws.com"
+      },
+      "dynamodb": {
+        "OldImage": {
+          "event_key":  { "S": "b9c73121-921d-46c5-9125-04c276143e0a" },
+          "channel_id": { "S": "1485381074786848819" },
+          "message_id": { "S": "1487537281274347602" },
+          "webcal_url": { "S": "webcal://www.powerphockey.com/ical_feed?tags=9339633" },
+          "guild_id":   { "S": "1083434745502896268" }
+        }
+      }
+    }
+  ]
+}

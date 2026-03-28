@@ -14,8 +14,13 @@ RSVP_ACTIONS = ("accepted", "declined", "tentative")
 def _table():
     kwargs = {}
     endpoint = os.environ.get("DYNAMODB_ENDPOINT")
+    if not endpoint and os.environ.get("AWS_SAM_LOCAL"):
+        endpoint = "http://host.docker.internal:8000"
     if endpoint:
         kwargs["endpoint_url"] = endpoint
+        kwargs["aws_access_key_id"] = "local"
+        kwargs["aws_secret_access_key"] = "local"
+        kwargs["aws_session_token"] = None
     return boto3.resource("dynamodb", region_name="us-east-1", **kwargs).Table(
         os.environ["DYNAMODB_TABLE"]
     )
@@ -37,6 +42,7 @@ def save_event(
     location: str | None,
     description: str | None,
     guild_id: str | None = None,
+    webcal_url: str | None = None,
 ) -> None:
     """Persist a new event with empty RSVP lists."""
     logger.debug("Saving event %s (%r)", event_key, name)
@@ -57,6 +63,8 @@ def save_event(
         item["description"] = description
     if guild_id is not None:
         item["guild_id"] = guild_id
+    if webcal_url is not None:
+        item["webcal_url"] = webcal_url
     _table().put_item(Item=item)
 
 

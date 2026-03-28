@@ -83,6 +83,16 @@ class TestSaveEvent:
         item = mock_table.put_item.call_args[1]["Item"]
         assert "guild_id" not in item
 
+    def test_stores_webcal_url_when_provided(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None, webcal_url="https://example.com/cal.ics")
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["webcal_url"] == "https://example.com/cal.ics"
+
+    def test_omits_webcal_url_when_none(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "webcal_url" not in item
+
 
 # ---------------------------------------------------------------------------
 # delete_event

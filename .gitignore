@@ -39,6 +39,9 @@ env.json
 .env
 .env.*
 
+# Generated before sam build — do not commit
+requirements.txt
+
 # PyCharm
 .idea/
 *.iml

@@ -1,4 +1,4 @@
-.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init serve register deploy
+.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init serve register deploy stream-test
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
@@ -48,4 +48,10 @@ register:
 # ── AWS deployment ────────────────────────────────────────────────────────────
 
 deploy:
+	pipenv requirements > requirements.txt
 	sam build && sam deploy --guided
+
+stream-test:
+	pipenv requirements > requirements.txt
+	sam build
+	set AWS_ACCESS_KEY_ID=local&&set AWS_SECRET_ACCESS_KEY=local&&sam local invoke BenchBossStreamFunction --event local/stream_test_event.json --env-vars local/env.json
