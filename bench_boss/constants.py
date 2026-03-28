@@ -1,0 +1,1 @@
+EVENT_TTL_HOURS = 4

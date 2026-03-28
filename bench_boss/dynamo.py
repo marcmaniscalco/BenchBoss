@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 import boto3
 from aws_lambda_powertools import Logger
 
+from bench_boss.constants import EVENT_TTL_HOURS
+
 logger = Logger(service="bench-boss")
 
 RSVP_ACTIONS = ("accepted", "declined", "tentative")
@@ -31,7 +33,7 @@ def _ttl_timestamp(end: str | None, start: str) -> int:
     base = datetime.fromisoformat(end if end else start)
     if base.tzinfo is None:
         base = base.replace(tzinfo=UTC)
-    return int((base + timedelta(hours=24)).timestamp())
+    return int((base + timedelta(hours=EVENT_TTL_HOURS)).timestamp())
 
 
 def save_event(
