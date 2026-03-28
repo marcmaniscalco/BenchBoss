@@ -75,6 +75,12 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             }
             return _handle_schedule(options.get("url", ""), guild_id=body.get("guild_id"))
 
+        if command == "events":
+            options = {
+                o["name"]: o["value"] for o in body.get("data", {}).get("options", [])
+            }
+            return _handle_events(options.get("url", ""), body, bot_token)
+
         return {
             "statusCode": 200,
             "body": {
@@ -377,6 +383,77 @@ def _delete_original_message(app_id: str, token: str) -> None:
     requests.delete(
         f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
     )
+
+
+def _handle_events(webcal_url: str, body: dict, bot_token: str) -> dict:
+    if not webcal_url:
+        return _ephemeral("No calendar URL provided.")
+
+    member = body.get("member") or {}
+    user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
+    if not user_id or not bot_token:
+        return _ephemeral("Could not determine your user ID.")
+
+    threading.Thread(
+        target=_send_dm_events,
+        args=(webcal_url, user_id, bot_token),
+        daemon=True,
+    ).start()
+
+    return _ephemeral("Sending you a DM with all events from the calendar.")
+
+
+def _format_event_line(ev) -> str:
+    from datetime import date as date_type
+
+    s = ev.start
+    if isinstance(s, datetime):
+        date_str = s.strftime("%a, %b %d at %I:%M %p").replace(" 0", " ")
+    elif isinstance(s, date_type):
+        date_str = "All day, " + s.strftime("%a, %b %d").replace(" 0", " ")
+    else:
+        date_str = str(s)
+    return f"**{ev.summary}** — {date_str}"
+
+
+def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
+    try:
+        events = WebCalReader(webcal_url).get_remaining()
+    except Exception as e:
+        logger.error("Failed to fetch calendar for events DM: %s", e)
+        return
+
+    if not events:
+        content = "No events found in the calendar."
+    else:
+        lines = ["**Remaining events from calendar:**"]
+        for ev in events:
+            lines.append(f"• {_format_event_line(ev)}")
+        content = "\n".join(lines)
+        if len(content) > 2000:
+            content = content[:1997] + "..."
+
+    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+
+    dm_resp = requests.post(
+        "https://discord.com/api/v10/users/@me/channels",
+        json={"recipient_id": user_id},
+        headers=headers,
+    )
+    if not dm_resp.ok:
+        logger.error("Failed to create DM channel for user %s: %s", user_id, dm_resp.status_code)
+        return
+
+    channel_id = dm_resp.json().get("id")
+    msg_resp = requests.post(
+        f"https://discord.com/api/v10/channels/{channel_id}/messages",
+        json={"content": content},
+        headers=headers,
+    )
+    if msg_resp.ok:
+        logger.info("Sent events DM to user %s", user_id)
+    else:
+        logger.error("Failed to send events DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
 
 
 def _message(content: str) -> dict:

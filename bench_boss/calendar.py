@@ -48,6 +48,12 @@ class WebCalReader:
 
         return sorted(events, key=lambda e: self._start_dt(e))
 
+    def get_remaining(self) -> list[CalendarEvent]:
+        """Return all events starting from now onward, sorted by start time."""
+        now = datetime.now(tz=UTC)
+        events = [e for e in self.get_events() if self._start_dt(e) >= now]
+        return sorted(events, key=lambda e: self._start_dt(e))
+
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------

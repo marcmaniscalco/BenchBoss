@@ -221,3 +221,49 @@ class TestGetUpcoming:
     def test_empty_calendar_returns_empty_list(self):
         reader = self._reader_with_events([])
         assert reader.get_upcoming(days=7) == []
+
+
+# ---------------------------------------------------------------------------
+# WebCalReader.get_remaining
+# ---------------------------------------------------------------------------
+
+
+class TestGetRemaining:
+    def _reader_with_events(self, events: list[dict]) -> WebCalReader:
+        raw = make_ical(events)
+        reader = WebCalReader("https://example.com/cal.ics")
+        reader._fetch = lambda: raw
+        return reader
+
+    def test_returns_future_events(self):
+        reader = self._reader_with_events(
+            [{"SUMMARY": "Future", "DTSTART": dt_str(future(10))}]
+        )
+        assert len(reader.get_remaining()) == 1
+
+    def test_excludes_past_events(self):
+        reader = self._reader_with_events(
+            [{"SUMMARY": "Past", "DTSTART": dt_str(past(1))}]
+        )
+        assert reader.get_remaining() == []
+
+    def test_includes_events_beyond_7_day_window(self):
+        reader = self._reader_with_events(
+            [{"SUMMARY": "Far future", "DTSTART": dt_str(future(30))}]
+        )
+        assert len(reader.get_remaining()) == 1
+
+    def test_results_sorted_by_start(self):
+        reader = self._reader_with_events(
+            [
+                {"SUMMARY": "Later", "DTSTART": dt_str(future(5))},
+                {"SUMMARY": "Sooner", "DTSTART": dt_str(future(1))},
+            ]
+        )
+        events = reader.get_remaining()
+        assert events[0].summary == "Sooner"
+        assert events[1].summary == "Later"
+
+    def test_empty_calendar_returns_empty_list(self):
+        reader = self._reader_with_events([])
+        assert reader.get_remaining() == []

@@ -17,6 +17,8 @@ from bench_boss.bot import (
     PONG,
     UPDATE_MESSAGE,
     _delete_original_message,
+    _format_event_line,
+    _send_dm_events,
     _update_channel_message,
     handle_interaction,
     verify_signature,
@@ -786,3 +788,161 @@ class TestRsvpEditModalSubmit:
         body = {"type": MODAL_SUBMIT, "data": {"custom_id": "unknown_modal:key1", "components": []}}
         result = handle_interaction(body)
         assert result["statusCode"] == 400
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — /events
+# ---------------------------------------------------------------------------
+
+
+def make_events_body(url: str, user_id: str = "user1") -> dict:
+    return {
+        "type": APPLICATION_COMMAND,
+        "member": {"user": {"id": user_id}},
+        "data": {
+            "name": "events",
+            "options": [{"name": "url", "value": url}],
+        },
+    }
+
+
+class TestEventsInteraction:
+    def test_missing_url_returns_ephemeral_error(self):
+        body = {"type": APPLICATION_COMMAND, "data": {"name": "events", "options": []}}
+        result = handle_interaction(body, bot_token="tok")
+        assert result["statusCode"] == 200
+        assert "No calendar URL provided" in result["body"]["data"]["content"]
+        assert result["body"]["data"]["flags"] == 64
+
+    def test_missing_bot_token_returns_ephemeral_error(self):
+        result = handle_interaction(make_events_body("https://example.com/cal.ics"))
+        assert result["statusCode"] == 200
+        assert "Could not determine" in result["body"]["data"]["content"]
+        assert result["body"]["data"]["flags"] == 64
+
+    def test_success_returns_ephemeral_and_starts_thread(self):
+        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+            result = handle_interaction(make_events_body("https://example.com/cal.ics"), bot_token="tok")
+        assert result["statusCode"] == 200
+        assert result["body"]["data"]["flags"] == 64
+        assert "DM" in result["body"]["data"]["content"]
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["target"] == _send_dm_events
+        assert kwargs["args"] == ("https://example.com/cal.ics", "user1", "tok")
+
+    def test_user_id_from_top_level_user_field(self):
+        body = {
+            "type": APPLICATION_COMMAND,
+            "user": {"id": "user99"},
+            "data": {"name": "events", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+        }
+        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+            handle_interaction(body, bot_token="tok")
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["args"][1] == "user99"
+
+
+class TestSendDmEvents:
+    def _make_mock_requests(self, events, dm_channel_id="dm123"):
+        import unittest.mock as mock
+
+        dm_resp = mock.MagicMock()
+        dm_resp.ok = True
+        dm_resp.json.return_value = {"id": dm_channel_id}
+
+        msg_resp = mock.MagicMock()
+        msg_resp.ok = True
+
+        return dm_resp, msg_resp
+
+    def test_sends_event_list_as_dm(self):
+        ev = make_calendar_event("Game Night")
+        dm_resp, msg_resp = self._make_mock_requests([ev])
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]) as mock_post,
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+
+        assert mock_post.call_count == 2
+        # Second call sends the message to the DM channel
+        msg_call_kwargs = mock_post.call_args_list[1][1]
+        content = msg_call_kwargs["json"]["content"]
+        assert "Game Night" in content
+        assert "Events from calendar" in content
+
+    def test_empty_calendar_sends_no_events_message(self):
+        dm_resp, msg_resp = self._make_mock_requests([])
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]) as mock_post,
+        ):
+            mock_reader.return_value.get_remaining.return_value = []
+            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+
+        msg_call_kwargs = mock_post.call_args_list[1][1]
+        assert "No events found" in msg_call_kwargs["json"]["content"]
+
+    def test_calendar_fetch_failure_aborts_silently(self):
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post") as mock_post,
+        ):
+            mock_reader.return_value.get_remaining.side_effect = Exception("timeout")
+            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+
+        mock_post.assert_not_called()
+
+    def test_dm_channel_creation_failure_aborts(self):
+        import unittest.mock as mock
+
+        dm_resp = mock.MagicMock()
+        dm_resp.ok = False
+        dm_resp.status_code = 403
+
+        ev = make_calendar_event()
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post", return_value=dm_resp) as mock_post,
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+
+        assert mock_post.call_count == 1  # Only the DM channel creation, no message sent
+
+    def test_long_event_list_truncated_to_2000_chars(self):
+        events = [make_calendar_event(f"Event {'X' * 100} {i}") for i in range(30)]
+        dm_resp, msg_resp = self._make_mock_requests(events)
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]) as mock_post,
+        ):
+            mock_reader.return_value.get_remaining.return_value = events
+            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+
+        msg_call_kwargs = mock_post.call_args_list[1][1]
+        assert len(msg_call_kwargs["json"]["content"]) <= 2000
+
+
+class TestFormatEventLine:
+    def test_datetime_event(self):
+        from bench_boss.calendar import CalendarEvent
+
+        start = datetime(2026, 3, 28, 10, 0, tzinfo=UTC)
+        ev = CalendarEvent(summary="Standup", start=start, end=None, location=None, description=None)
+        line = _format_event_line(ev)
+        assert "Standup" in line
+        assert "Mar" in line
+        assert "28" in line
+
+    def test_all_day_event(self):
+        from datetime import date
+
+        from bench_boss.calendar import CalendarEvent
+
+        ev = CalendarEvent(summary="All Day", start=date(2026, 4, 1), end=None, location=None, description=None)
+        line = _format_event_line(ev)
+        assert "All day" in line
+        assert "All Day" in line

@@ -35,6 +35,18 @@ COMMANDS = [
             }
         ],
     },
+    {
+        "name": "events",
+        "description": "DM you a list of all events from a calendar.",
+        "options": [
+            {
+                "name": "url",
+                "description": "The webcal:// or https:// URL of the calendar.",
+                "type": 3,  # STRING
+                "required": True,
+            }
+        ],
+    },
 ]
 
 url = f"https://discord.com/api/v10/applications/{DISCORD_APP_ID}/guilds/{GUILD_ID}/commands"
