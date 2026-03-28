@@ -27,6 +27,7 @@ else:
         AttributeDefinitions=[{"AttributeName": "event_key", "AttributeType": "S"}],
         KeySchema=[{"AttributeName": "event_key", "KeyType": "HASH"}],
         BillingMode="PAY_PER_REQUEST",
+        StreamSpecification={"StreamEnabled": True, "StreamViewType": "OLD_IMAGE"},
     )
     client.update_time_to_live(
         TableName=TABLE_NAME,

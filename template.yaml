@@ -31,6 +31,8 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+      StreamSpecification:
+        StreamViewType: OLD_IMAGE
 
   BenchBossFunction:
     Type: AWS::Serverless::Function
@@ -51,6 +53,28 @@ Resources:
           Properties:
             Path: /interactions
             Method: POST
+
+  BenchBossStreamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: stream_lambda_handler.stream_lambda_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref BenchBossTable
+      Environment:
+        Variables:
+          DISCORD_TOKEN: !Ref DiscordToken
+          DYNAMODB_TABLE: !Ref BenchBossTable
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt BenchBossTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName": ["REMOVE"]}'
 
 Outputs:
   InteractionsUrl:
