@@ -24,25 +24,27 @@ _RSVP_STYLES = {
 }
 
 
-def _ensure_utc(dt: datetime) -> datetime:
+def _ensure_tz(dt: datetime) -> datetime:
     if not dt.tzinfo:
         return dt.replace(tzinfo=UTC)
     return dt
 
 
 def _format_dt(start: datetime, end: datetime | None) -> str:
-    start = _ensure_utc(start)
+    start = _ensure_tz(start)
+    tz_label = start.strftime("%Z") or "UTC"
     hour = start.hour % 12 or 12
     minute = start.strftime("%M")
     ampm = "AM" if start.hour < 12 else "PM"
     date_str = start.strftime(f"%A, %B {start.day}, %Y")
-    time_str = f"{hour}:{minute} {ampm} UTC"
+    time_str = f"{hour}:{minute} {ampm} {tz_label}"
     if end:
-        end = _ensure_utc(end)
+        end = _ensure_tz(end).astimezone(start.tzinfo)
+        end_tz_label = end.strftime("%Z") or "UTC"
         end_hour = end.hour % 12 or 12
         end_minute = end.strftime("%M")
         end_ampm = "AM" if end.hour < 12 else "PM"
-        return f"{date_str}\n{time_str} – {end_hour}:{end_minute} {end_ampm} UTC"
+        return f"{date_str}\n{time_str} – {end_hour}:{end_minute} {end_ampm} {end_tz_label}"
     return f"{date_str}\n{time_str}"
 
 

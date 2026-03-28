@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from bench_boss.discord_api import (
     BLURPLE,
@@ -110,6 +110,19 @@ class TestBuildEventEmbed:
             "Event", naive_start, None, None, None, [], [], []
         )
         assert embed["title"] == "Event"
+
+    def test_when_field_shows_utc_label_for_utc_datetimes(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
+        when_field = next(f for f in embed["fields"] if "📅" in f["name"])
+        assert "UTC" in when_field["value"]
+
+    def test_when_field_shows_original_timezone_label(self):
+        eastern = timezone(timedelta(hours=-5), name="EST")
+        est_start = datetime(2026, 4, 5, 19, 0, tzinfo=eastern)
+        embed = build_event_embed("Event", est_start, None, None, None, [], [], [])
+        when_field = next(f for f in embed["fields"] if "📅" in f["name"])
+        assert "EST" in when_field["value"]
+        assert "UTC" not in when_field["value"]
 
 
 # ---------------------------------------------------------------------------

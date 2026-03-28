@@ -871,7 +871,7 @@ class TestSendDmEvents:
         msg_call_kwargs = mock_post.call_args_list[1][1]
         content = msg_call_kwargs["json"]["content"]
         assert "Game Night" in content
-        assert "Events from calendar" in content
+        assert "Remaining events from calendar" in content
 
     def test_empty_calendar_sends_no_events_message(self):
         dm_resp, msg_resp = self._make_mock_requests([])
