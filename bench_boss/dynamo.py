@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import boto3
 from aws_lambda_powertools import Logger
+from boto3.dynamodb.conditions import Attr
 
 from bench_boss.constants import EVENT_TTL_HOURS
 
@@ -45,6 +46,7 @@ def save_event(
     description: str | None,
     guild_id: str | None = None,
     webcal_url: str | None = None,
+    channel_id: str | None = None,
 ) -> None:
     """Persist a new event with empty RSVP lists."""
     logger.debug("Saving event %s (%r)", event_key, name)
@@ -67,7 +69,18 @@ def save_event(
         item["guild_id"] = guild_id
     if webcal_url is not None:
         item["webcal_url"] = webcal_url
+    if channel_id is not None:
+        item["channel_id"] = channel_id
     _table().put_item(Item=item)
+
+
+def find_event_in_channel(channel_id: str, name: str, start: str) -> dict | None:
+    """Return an existing active event in the channel with the same name and start, or None."""
+    resp = _table().scan(
+        FilterExpression=Attr("channel_id").eq(channel_id) & Attr("name").eq(name) & Attr("start").eq(start),
+    )
+    items = resp.get("Items", [])
+    return items[0] if items else None
 
 
 def store_message_ref(event_key: str, channel_id: str, message_id: str) -> None:

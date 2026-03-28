@@ -242,6 +242,53 @@ class TestScheduleInteraction:
         embed = result["body"]["data"]["embeds"][0]
         assert embed["title"] == "First"
 
+    def test_duplicate_event_returns_ephemeral_error(self):
+        event = make_calendar_event("Game Night")
+        body = {
+            "type": APPLICATION_COMMAND,
+            "channel_id": "ch1",
+            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+        }
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.find_event_in_channel", return_value={"event_key": "existing"}),
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(body)
+        assert result["body"]["data"]["flags"] == 64
+        assert "already posted" in result["body"]["data"]["content"]
+
+    def test_duplicate_check_skipped_when_no_channel_id(self):
+        event = make_calendar_event("Game Night")
+        body = {
+            "type": APPLICATION_COMMAND,
+            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+        }
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.find_event_in_channel") as mock_find,
+            patch("bench_boss.bot.save_event"),
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            handle_interaction(body)
+        mock_find.assert_not_called()
+
+    def test_duplicate_check_failure_does_not_block_save(self):
+        event = make_calendar_event("Game Night")
+        body = {
+            "type": APPLICATION_COMMAND,
+            "channel_id": "ch1",
+            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+        }
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.find_event_in_channel", side_effect=Exception("DynamoDB down")),
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            handle_interaction(body)
+        mock_save.assert_called_once()
+
     def test_starts_message_ref_thread_when_app_id_and_token_present(self):
         event = make_calendar_event()
         body = {

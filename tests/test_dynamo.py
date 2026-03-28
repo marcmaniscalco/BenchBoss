@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bench_boss.dynamo import _ttl_timestamp, delete_event, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
+from bench_boss.dynamo import _ttl_timestamp, delete_event, find_event_in_channel, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
 
 
 @pytest.fixture()
@@ -92,6 +92,39 @@ class TestSaveEvent:
         save_event("key1", "My Event", START, None, None, None)
         item = mock_table.put_item.call_args[1]["Item"]
         assert "webcal_url" not in item
+
+    def test_stores_channel_id_when_provided(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None, channel_id="ch1")
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["channel_id"] == "ch1"
+
+    def test_omits_channel_id_when_none(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "channel_id" not in item
+
+
+# ---------------------------------------------------------------------------
+# find_event_in_channel
+# ---------------------------------------------------------------------------
+
+
+class TestFindEventInChannel:
+    def test_returns_item_when_match_found(self, mock_table):
+        mock_table.scan.return_value = {"Items": [{"event_key": "key1", "name": "My Event"}]}
+        result = find_event_in_channel("ch1", "My Event", START)
+        assert result["event_key"] == "key1"
+
+    def test_returns_none_when_no_match(self, mock_table):
+        mock_table.scan.return_value = {"Items": []}
+        result = find_event_in_channel("ch1", "My Event", START)
+        assert result is None
+
+    def test_scans_with_filter_expression(self, mock_table):
+        mock_table.scan.return_value = {"Items": []}
+        find_event_in_channel("ch1", "My Event", START)
+        mock_table.scan.assert_called_once()
+        assert "FilterExpression" in mock_table.scan.call_args[1]
 
 
 # ---------------------------------------------------------------------------

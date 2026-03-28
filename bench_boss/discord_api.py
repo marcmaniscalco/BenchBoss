@@ -1,6 +1,7 @@
 """Discord embed and component builders for Apollo-style event messages."""
 
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
 BLURPLE = 0x5865F2
 
@@ -48,6 +49,32 @@ def _format_dt(start: datetime, end: datetime | None) -> str:
     return f"{date_str}\n{time_str}"
 
 
+def _build_gcal_url(
+    name: str,
+    start: datetime,
+    end: datetime | None,
+    location: str | None,
+    description: str | None,
+) -> str:
+    from datetime import date as date_type
+
+    def _fmt(dt) -> str:
+        if isinstance(dt, datetime):
+            return _ensure_tz(dt).astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+        return dt.strftime("%Y%m%d")  # all-day
+
+    start_str = _fmt(start)
+    end_str = _fmt(end) if end else start_str
+
+    params: dict = {"action": "TEMPLATE", "text": name, "dates": f"{start_str}/{end_str}"}
+    if location:
+        params["location"] = location
+    if description:
+        params["details"] = description
+
+    return "https://calendar.google.com/calendar/render?" + urlencode(params)
+
+
 def _rsvp_field(action: str, users: list[str]) -> dict:
     label = _RSVP_LABELS[action]
     count = len(users)
@@ -79,6 +106,11 @@ def build_event_embed(
                 "inline": False,
             }
         )
+
+    gcal_url = _build_gcal_url(name, start, end, location, description)
+    fields.append(
+        {"name": "🗓️ Add to Calendar", "value": f"[Google Calendar]({gcal_url})", "inline": False}
+    )
 
     # Blank separator before RSVP section
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})

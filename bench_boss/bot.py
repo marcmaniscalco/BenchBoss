@@ -19,7 +19,7 @@ from bench_boss.discord_api import (
     build_remove_rsvp_modal,
     build_rsvp_components,
 )
-from bench_boss.dynamo import RSVP_ACTIONS, delete_event, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
+from bench_boss.dynamo import RSVP_ACTIONS, delete_event, find_event_in_channel, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
 
 logger = Logger(service="bench-boss")
 
@@ -78,6 +78,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
                 guild_id=body.get("guild_id"),
                 app_id=body.get("application_id", ""),
                 interaction_token=body.get("token", ""),
+                channel_id=body.get("channel_id", ""),
             )
 
         if command == "events":
@@ -124,6 +125,7 @@ def _handle_schedule(
     guild_id: str | None = None,
     app_id: str = "",
     interaction_token: str = "",
+    channel_id: str = "",
 ) -> dict:
     if not webcal_url:
         return _message("No calendar URL provided.")
@@ -139,18 +141,30 @@ def _handle_schedule(
         return _message("No upcoming events found in the calendar.")
 
     ev = events[0]
+    start_iso = _ensure_utc_iso(ev.start)
+
+    if channel_id:
+        try:
+            existing = find_event_in_channel(channel_id, ev.summary, start_iso)
+        except Exception as e:
+            logger.error("Duplicate check failed: %s", e)
+            existing = None
+        if existing:
+            return _ephemeral(f"**{ev.summary}** is already posted in this channel.")
+
     event_key = str(uuid.uuid4())
 
     try:
         save_event(
             event_key=event_key,
             name=ev.summary,
-            start=_ensure_utc_iso(ev.start),
+            start=start_iso,
             end=_ensure_utc_iso(ev.end) if ev.end else None,
             location=ev.location,
             description=ev.description,
             guild_id=guild_id,
             webcal_url=webcal_url,
+            channel_id=channel_id or None,
         )
         logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
     except Exception as e:

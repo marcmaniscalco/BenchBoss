@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 from bench_boss.discord_api import (
     BLURPLE,
+    _build_gcal_url,
     build_add_rsvp_modal,
     build_event_embed,
     build_remove_rsvp_modal,
@@ -123,6 +124,60 @@ class TestBuildEventEmbed:
         when_field = next(f for f in embed["fields"] if "📅" in f["name"])
         assert "EST" in when_field["value"]
         assert "UTC" not in when_field["value"]
+
+
+# ---------------------------------------------------------------------------
+# _build_gcal_url
+# ---------------------------------------------------------------------------
+
+
+class TestBuildGcalUrl:
+    def test_contains_base_url(self):
+        url = _build_gcal_url("Game Night", START, END, None, None)
+        assert url.startswith("https://calendar.google.com/calendar/render")
+
+    def test_event_name_encoded_in_url(self):
+        url = _build_gcal_url("Game Night", START, END, None, None)
+        assert "Game+Night" in url or "Game%20Night" in url
+
+    def test_dates_formatted_as_utc(self):
+        url = _build_gcal_url("Event", START, END, None, None)
+        assert "20260405T190000Z" in url
+        assert "20260405T200000Z" in url
+
+    def test_no_end_uses_start_for_end(self):
+        url = _build_gcal_url("Event", START, None, None, None)
+        assert url.count("20260405T190000Z") == 2
+
+    def test_location_included_when_provided(self):
+        url = _build_gcal_url("Event", START, END, "Ice Rink", None)
+        assert "Ice+Rink" in url or "Ice%20Rink" in url
+
+    def test_description_included_when_provided(self):
+        url = _build_gcal_url("Event", START, END, None, "Bring skates")
+        assert "Bring+skates" in url or "Bring%20skates" in url
+
+    def test_location_omitted_when_none(self):
+        url = _build_gcal_url("Event", START, END, None, None)
+        assert "location" not in url
+
+    def test_all_day_event_uses_date_only_format(self):
+        from datetime import date
+        all_day_start = date(2026, 4, 5)
+        url = _build_gcal_url("Event", all_day_start, None, None, None)
+        assert "20260405" in url
+        assert "T" not in url.split("dates=")[1].split("&")[0]
+
+    def test_embed_contains_add_to_calendar_field(self):
+        embed = build_event_embed("Event", START, END, None, None, [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert any("Calendar" in n for n in field_names)
+
+    def test_embed_calendar_field_contains_google_link(self):
+        embed = build_event_embed("Event", START, END, None, None, [], [], [])
+        cal_field = next(f for f in embed["fields"] if "Calendar" in f["name"])
+        assert "calendar.google.com" in cal_field["value"]
+        assert "Google Calendar" in cal_field["value"]
 
 
 # ---------------------------------------------------------------------------
