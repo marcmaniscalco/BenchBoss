@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 from bench_boss.discord_api import (
     BLURPLE,
@@ -162,7 +162,6 @@ class TestBuildGcalUrl:
         assert "location" not in url
 
     def test_all_day_event_uses_date_only_format(self):
-        from datetime import date
         all_day_start = date(2026, 4, 5)
         url = _build_gcal_url("Event", all_day_start, None, None, None)
         assert "20260405" in url

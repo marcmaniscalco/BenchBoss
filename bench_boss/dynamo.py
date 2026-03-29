@@ -113,6 +113,15 @@ def get_event(event_key: str) -> dict | None:
     return response.get("Item")
 
 
+def _clear_user_from_rsvps(event: dict, user_id: str) -> None:
+    """Remove user_id from all RSVP action lists in-place."""
+    for a in RSVP_ACTIONS:
+        users = list(event.get(a, []))
+        if user_id in users:
+            users.remove(user_id)
+        event[a] = users
+
+
 def set_rsvp(event_key: str, user_id: str, action: str) -> dict:
     """
     Set a user's RSVP to a specific action without toggling.
@@ -125,12 +134,7 @@ def set_rsvp(event_key: str, user_id: str, action: str) -> dict:
         logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
-    for a in RSVP_ACTIONS:
-        users = list(event.get(a, []))
-        if user_id in users:
-            users.remove(user_id)
-        event[a] = users
-
+    _clear_user_from_rsvps(event, user_id)
     event[action] = event.get(action, []) + [user_id]
     _table().put_item(Item=event)
     return event
@@ -143,12 +147,7 @@ def remove_rsvp(event_key: str, user_id: str) -> dict:
         logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
-    for a in RSVP_ACTIONS:
-        users = list(event.get(a, []))
-        if user_id in users:
-            users.remove(user_id)
-        event[a] = users
-
+    _clear_user_from_rsvps(event, user_id)
     _table().put_item(Item=event)
     return event
 
@@ -167,13 +166,7 @@ def update_rsvp(event_key: str, user_id: str, action: str) -> dict:
         raise ValueError(f"Event {event_key!r} not found")
 
     already_in_action = user_id in event.get(action, [])
-
-    for a in RSVP_ACTIONS:
-        users = list(event.get(a, []))
-        if user_id in users:
-            users.remove(user_id)
-        event[a] = users
-
+    _clear_user_from_rsvps(event, user_id)
     if not already_in_action:
         event[action] = event.get(action, []) + [user_id]
 

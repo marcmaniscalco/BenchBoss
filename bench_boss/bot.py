@@ -12,6 +12,7 @@ from aws_lambda_powertools import Logger
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
+from bench_boss.constants import MESSAGE_FETCH_DELAY
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
     build_event_embed,
@@ -45,6 +46,8 @@ CHANNEL_MESSAGE_WITH_SOURCE = 4
 DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7
 MODAL = 9
+
+_ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative"}
 
 
 def verify_signature(
@@ -350,8 +353,6 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         if not user_id:
             return _ephemeral("Could not find that user — try again with their @mention or numeric ID.")
 
-    _ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative"}
-
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
         action = _ACTION_ALIASES.get(action, action)
@@ -422,7 +423,7 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
 
 def _fetch_and_store_message_ref(app_id: str, interaction_token: str, event_key: str) -> None:
     """Fetch the original interaction response message and persist its ID."""
-    time.sleep(0.5)  # Give Discord time to persist the message
+    time.sleep(MESSAGE_FETCH_DELAY)  # Give Discord time to persist the message
     resp = requests.get(
         f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/@original",
         timeout=10,
@@ -442,7 +443,7 @@ def _fetch_and_store_message_ref(app_id: str, interaction_token: str, event_key:
 
 def _delete_original_message(app_id: str, token: str) -> None:
     """Delete the original event message after the interaction callback has been sent."""
-    time.sleep(0.5)
+    time.sleep(MESSAGE_FETCH_DELAY)
     requests.delete(
         f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
         timeout=10,
@@ -520,18 +521,12 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
         logger.error("Failed to send events DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
 
 
-def _message(content: str) -> dict:
-    return {
-        "statusCode": 200,
-        "body": {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {"content": content}},
-    }
+def _message(content: str, ephemeral: bool = False) -> dict:
+    data: dict = {"content": content}
+    if ephemeral:
+        data["flags"] = 64
+    return {"statusCode": 200, "body": {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": data}}
 
 
 def _ephemeral(content: str) -> dict:
-    return {
-        "statusCode": 200,
-        "body": {
-            "type": CHANNEL_MESSAGE_WITH_SOURCE,
-            "data": {"content": content, "flags": 64},
-        },
-    }
+    return _message(content, ephemeral=True)

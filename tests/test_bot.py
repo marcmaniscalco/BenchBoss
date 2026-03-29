@@ -1,10 +1,12 @@
 import json
 import time
-from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 import pytest
 from nacl.signing import SigningKey
+
+from bench_boss.calendar import CalendarEvent
 
 from bench_boss.bot import (
     APPLICATION_COMMAND,
@@ -61,8 +63,6 @@ def make_rsvp_body(custom_id: str, user_id: str = "user1") -> dict:
 
 
 def make_calendar_event(summary="Team Standup", days_ahead=1):
-    from bench_boss.calendar import CalendarEvent
-
     start = datetime.now(tz=UTC) + timedelta(days=days_ahead)
     return CalendarEvent(
         summary=summary,
@@ -504,7 +504,11 @@ class TestUpdateChannelMessage:
         return base
 
     def _ok_resp(self):
-        return type("R", (), {"ok": True, "status_code": 200, "text": ""})()
+        resp = MagicMock()
+        resp.ok = True
+        resp.status_code = 200
+        resp.text = ""
+        return resp
 
     def test_uses_webhook_url_when_interaction_token_present(self):
         event = self._make_event(interaction_token="itoken", app_id="app1")
@@ -590,7 +594,6 @@ class TestDeleteOriginalMessage:
 
 class TestFetchAndStoreMessageRef:
     def _mock_get(self, ok=True, message_id="msg1", channel_id="ch1"):
-        from unittest.mock import MagicMock
         resp = MagicMock()
         resp.ok = ok
         resp.status_code = 200 if ok else 404
@@ -626,7 +629,6 @@ class TestFetchAndStoreMessageRef:
         mock_store.assert_not_called()
 
     def test_missing_message_id_in_response_skips_store(self):
-        from unittest.mock import MagicMock
         resp = MagicMock()
         resp.ok = True
         resp.json.return_value = {"channel_id": "ch1"}  # no "id"
@@ -833,7 +835,9 @@ class TestRsvpEditModalSubmit:
 
     def test_username_resolved_via_guild_search(self):
         event = {**make_stored_event(), "guild_id": "guild1"}
-        mock_get_resp = type("R", (), {"ok": True, "json": lambda self: [{"user": {"id": "999"}}]})()
+        mock_get_resp = MagicMock()
+        mock_get_resp.ok = True
+        mock_get_resp.json.return_value = [{"user": {"id": "999"}}]
         with (
             patch("bench_boss.bot.get_event", return_value=event),
             patch("bench_boss.bot.requests.get", return_value=mock_get_resp),
@@ -845,7 +849,9 @@ class TestRsvpEditModalSubmit:
 
     def test_username_not_found_in_guild_returns_error(self):
         event = {**make_stored_event(), "guild_id": "guild1"}
-        mock_get_resp = type("R", (), {"ok": True, "json": lambda self: []})()
+        mock_get_resp = MagicMock()
+        mock_get_resp.ok = True
+        mock_get_resp.json.return_value = []
         with (
             patch("bench_boss.bot.get_event", return_value=event),
             patch("bench_boss.bot.requests.get", return_value=mock_get_resp),
@@ -990,13 +996,11 @@ class TestEventsInteraction:
 
 class TestSendDmEvents:
     def _make_mock_requests(self, events, dm_channel_id="dm123"):
-        import unittest.mock as mock
-
-        dm_resp = mock.MagicMock()
+        dm_resp = MagicMock()
         dm_resp.ok = True
         dm_resp.json.return_value = {"id": dm_channel_id}
 
-        msg_resp = mock.MagicMock()
+        msg_resp = MagicMock()
         msg_resp.ok = True
 
         return dm_resp, msg_resp
@@ -1041,9 +1045,7 @@ class TestSendDmEvents:
         mock_post.assert_not_called()
 
     def test_dm_channel_creation_failure_aborts(self):
-        import unittest.mock as mock
-
-        dm_resp = mock.MagicMock()
+        dm_resp = MagicMock()
         dm_resp.ok = False
         dm_resp.status_code = 403
 
@@ -1073,8 +1075,6 @@ class TestSendDmEvents:
 
 class TestFormatEventLine:
     def test_datetime_event(self):
-        from bench_boss.calendar import CalendarEvent
-
         start = datetime(2026, 3, 28, 10, 0, tzinfo=UTC)
         ev = CalendarEvent(summary="Standup", start=start, end=None, location=None, description=None)
         line = _format_event_line(ev)
@@ -1083,10 +1083,6 @@ class TestFormatEventLine:
         assert "28" in line
 
     def test_all_day_event(self):
-        from datetime import date
-
-        from bench_boss.calendar import CalendarEvent
-
         ev = CalendarEvent(summary="All Day", start=date(2026, 4, 1), end=None, location=None, description=None)
         line = _format_event_line(ev)
         assert "All day" in line
