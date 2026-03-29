@@ -224,7 +224,7 @@ class TestNextEventPosted:
 
 
 class TestNoMoreEvents:
-    def test_posts_no_more_events_message_with_url(self):
+    def test_posts_no_more_events_embed(self):
         post_resp = mock_ok_response()
 
         with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
@@ -233,9 +233,9 @@ class TestNoMoreEvents:
             mock_reader.return_value.get_remaining.return_value = []
             handle_stream_records([make_remove_record()], bot_token="tok")
 
-        content = mock_post.call_args[1]["json"]["content"]
-        assert "https://example.com/cal.ics" in content
-        assert "No more events" in content
+        payload = mock_post.call_args[1]["json"]
+        assert "embeds" in payload
+        assert payload["embeds"][0]["title"] == "No More Events"
 
     def test_no_more_events_still_deletes_old_message(self):
         with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \

@@ -165,6 +165,15 @@ def build_rsvp_components(event_key: str) -> list[dict]:
 
 
 
+def build_no_events_embed() -> dict:
+    """Build an embed shown when the calendar has no more upcoming events."""
+    return {
+        "title": "No More Events",
+        "description": "There are no more upcoming events scheduled in this calendar.",
+        "color": BLURPLE,
+    }
+
+
 def build_add_rsvp_modal(event_key: str) -> dict:
     """Return the modal data for adding a user to the RSVP."""
     return {

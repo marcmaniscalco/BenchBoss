@@ -5,6 +5,7 @@ from bench_boss.discord_api import (
     _build_gcal_url,
     build_add_rsvp_modal,
     build_event_embed,
+    build_no_events_embed,
     build_remove_rsvp_modal,
     build_rsvp_components,
 )
@@ -286,6 +287,17 @@ class TestBuildRsvpComponents:
 # ---------------------------------------------------------------------------
 # build_add_rsvp_modal / build_remove_rsvp_modal
 # ---------------------------------------------------------------------------
+
+
+class TestBuildNoEventsEmbed:
+    def test_has_title(self):
+        assert build_no_events_embed()["title"] == "No More Events"
+
+    def test_has_description(self):
+        assert "description" in build_no_events_embed()
+
+    def test_color_is_blurple(self):
+        assert build_no_events_embed()["color"] == BLURPLE
 
 
 class TestBuildAddRsvpModal:

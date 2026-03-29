@@ -7,7 +7,7 @@ import requests
 from aws_lambda_powertools import Logger
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.discord_api import build_event_embed, build_rsvp_components
+from bench_boss.discord_api import build_event_embed, build_no_events_embed, build_rsvp_components
 from bench_boss.dynamo import save_event, store_message_ref
 
 logger = Logger(service="bench-boss")
@@ -60,7 +60,7 @@ def _post_next_event(
     if not events:
         resp = requests.post(
             f"https://discord.com/api/v10/channels/{channel_id}/messages",
-            json={"content": f"No more events at: {webcal_url}"},
+            json={"embeds": [build_no_events_embed()]},
             headers=headers,
             timeout=10,
         )
