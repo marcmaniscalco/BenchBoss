@@ -338,13 +338,13 @@ winget install Amazon.SAM-CLI
 
 Configure AWS credentials:
 ```powershell
-aws configure
+aws login
 ```
 
 ### 6.2 Create an S3 bucket for SAM artifacts (one-time)
 
 ```powershell
-aws s3 mb s3://<your-unique-bucket-name>
+aws s3 mb s3://the-bench-boss
 ```
 
 ### 6.3 Deploy
