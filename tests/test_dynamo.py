@@ -2,7 +2,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bench_boss.dynamo import _ttl_timestamp, delete_event, find_event_in_channel, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
+from bench_boss.dynamo import (
+    _ttl_timestamp,
+    delete_event,
+    find_event_in_channel,
+    get_event,
+    remove_rsvp,
+    save_event,
+    set_rsvp,
+    store_interaction_ref,
+    store_message_ref,
+    update_rsvp,
+)
 
 
 @pytest.fixture()

@@ -62,6 +62,7 @@ def _post_next_event(
             f"https://discord.com/api/v10/channels/{channel_id}/messages",
             json={"content": f"No more events at: {webcal_url}"},
             headers=headers,
+            timeout=10,
         )
         if not resp.ok:
             logger.warning(
@@ -105,6 +106,7 @@ def _post_next_event(
         f"https://discord.com/api/v10/channels/{channel_id}/messages",
         json={"embeds": [embed], "components": components},
         headers=headers,
+        timeout=10,
     )
     if resp.ok:
         new_message_id = resp.json().get("id")
@@ -121,6 +123,7 @@ def _delete_discord_message(channel_id: str, message_id: str, bot_token: str) ->
     resp = requests.delete(
         f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
         headers={"Authorization": f"Bot {bot_token}"},
+        timeout=10,
     )
     if resp.ok:
         logger.info(

@@ -56,7 +56,6 @@ def _build_gcal_url(
     location: str | None,
     description: str | None,
 ) -> str:
-    from datetime import date as date_type
 
     def _fmt(dt) -> str:
         if isinstance(dt, datetime):

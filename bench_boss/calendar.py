@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import requests
 from aws_lambda_powertools import Logger
@@ -100,6 +100,4 @@ class WebCalReader:
 
     @staticmethod
     def _add_days(dt: datetime, days: int) -> datetime:
-        from datetime import timedelta
-
         return dt + timedelta(days=days)

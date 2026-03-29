@@ -5,11 +5,10 @@ Core bot logic — shared between local dev server and Lambda.
 import threading
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import requests
 from aws_lambda_powertools import Logger
-from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
@@ -19,7 +18,18 @@ from bench_boss.discord_api import (
     build_remove_rsvp_modal,
     build_rsvp_components,
 )
-from bench_boss.dynamo import RSVP_ACTIONS, delete_event, find_event_in_channel, get_event, remove_rsvp, save_event, set_rsvp, store_interaction_ref, store_message_ref, update_rsvp
+from bench_boss.dynamo import (
+    RSVP_ACTIONS,
+    delete_event,
+    find_event_in_channel,
+    get_event,
+    remove_rsvp,
+    save_event,
+    set_rsvp,
+    store_interaction_ref,
+    store_message_ref,
+    update_rsvp,
+)
 
 logger = Logger(service="bench-boss")
 
@@ -45,7 +55,7 @@ def verify_signature(
         verify_key = VerifyKey(bytes.fromhex(public_key))
         verify_key.verify(timestamp.encode() + raw_body, bytes.fromhex(signature))
         return True
-    except (BadSignatureError, Exception):
+    except Exception:
         logger.warning("Signature verification failed")
         return False
 
@@ -310,6 +320,7 @@ def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | Non
         f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
         params={"query": query, "limit": 1},
         headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+        timeout=10,
     )
     if not resp.ok:
         logger.warning("Guild member search failed for %r: %s", query, resp.status_code)
@@ -402,7 +413,7 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
         headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
 
-    resp = requests.patch(url, json={"embeds": [embed], "components": components}, headers=headers)
+    resp = requests.patch(url, json={"embeds": [embed], "components": components}, headers=headers, timeout=10)
     if resp.ok:
         logger.info("Updated channel message for event %s", event_key)
     else:
@@ -413,7 +424,8 @@ def _fetch_and_store_message_ref(app_id: str, interaction_token: str, event_key:
     """Fetch the original interaction response message and persist its ID."""
     time.sleep(0.5)  # Give Discord time to persist the message
     resp = requests.get(
-        f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/@original"
+        f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/@original",
+        timeout=10,
     )
     if not resp.ok:
         logger.warning("Failed to fetch original message for event %s: %s", event_key, resp.status_code)
@@ -433,6 +445,7 @@ def _delete_original_message(app_id: str, token: str) -> None:
     time.sleep(0.5)
     requests.delete(
         f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
+        timeout=10,
     )
 
 
@@ -455,12 +468,10 @@ def _handle_events(webcal_url: str, body: dict, bot_token: str) -> dict:
 
 
 def _format_event_line(ev) -> str:
-    from datetime import date as date_type
-
     s = ev.start
     if isinstance(s, datetime):
         date_str = s.strftime("%a, %b %d at %I:%M %p").replace(" 0", " ")
-    elif isinstance(s, date_type):
+    elif isinstance(s, date):
         date_str = "All day, " + s.strftime("%a, %b %d").replace(" 0", " ")
     else:
         date_str = str(s)
@@ -490,6 +501,7 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
         "https://discord.com/api/v10/users/@me/channels",
         json={"recipient_id": user_id},
         headers=headers,
+        timeout=10,
     )
     if not dm_resp.ok:
         logger.error("Failed to create DM channel for user %s: %s", user_id, dm_resp.status_code)
@@ -500,6 +512,7 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
         f"https://discord.com/api/v10/channels/{channel_id}/messages",
         json={"content": content},
         headers=headers,
+        timeout=10,
     )
     if msg_resp.ok:
         logger.info("Sent events DM to user %s", user_id)

@@ -1,9 +1,8 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from bench_boss.calendar import CalendarEvent
 from bench_boss.stream_handler import handle_stream_records
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -140,6 +139,7 @@ class TestNextEventPosted:
         mock_del.assert_called_once_with(
             "https://discord.com/api/v10/channels/ch1/messages/msg1",
             headers={"Authorization": "Bot tok"},
+            timeout=10,
         )
 
     def test_new_embed_posted_to_same_channel(self):
