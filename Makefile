@@ -49,9 +49,9 @@ register:
 
 deploy:
 	pipenv requirements > requirements.txt
-	sam build && sam deploy --guided
+	sam build --template infrastructure/template.yaml && sam deploy --guided --template infrastructure/template.yaml
 
 stream-test:
 	pipenv requirements > requirements.txt
-	sam build
+	sam build --template infrastructure/template.yaml
 	set AWS_ACCESS_KEY_ID=local&&set AWS_SECRET_ACCESS_KEY=local&&sam local invoke BenchBossStreamFunction --event local/stream_test_event.json --env-vars local/env.json

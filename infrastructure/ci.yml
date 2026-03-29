@@ -1,0 +1,178 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CI pipeline for BenchBoss — CodeBuild + EventBridge triggers on CodeCommit
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Description: Name of the CodeCommit repository
+    Default: BenchBoss
+
+  BranchName:
+    Type: String
+    Description: Branch to run CI on push
+    Default: main
+
+Resources:
+
+  # ── IAM Role ────────────────────────────────────────────────────────────────
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${RepositoryName}-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${RepositoryName}-ci*"
+              - Sid: CodeCommitRead
+                Effect: Allow
+                Action:
+                  - codecommit:GitPull
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+              - Sid: CodeCommitPRComments
+                Effect: Allow
+                Action:
+                  - codecommit:PostCommentForPullRequest
+                  - codecommit:UpdatePullRequestApprovalState
+                Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+
+  # ── CodeBuild Project ────────────────────────────────────────────────────────
+
+  CIProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${RepositoryName}-ci"
+      Description: Lint and test on every push and pull request
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        Type: CODECOMMIT
+        Location: !Sub "https://git-codecommit.${AWS::Region}.amazonaws.com/v1/repos/${RepositoryName}"
+        BuildSpec: infrastructure/buildspec.yml
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Cache:
+        Type: LOCAL
+        Modes:
+          - LOCAL_CUSTOM_CACHE
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${RepositoryName}-ci"
+
+  # ── EventBridge: push to main ────────────────────────────────────────────────
+
+  PushTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${RepositoryName}-ci-push"
+      Description: Trigger CI on push to main
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref BranchName
+      State: ENABLED
+      Targets:
+        - Id: CIBuild
+          Arn: !GetAtt CIProject.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+          InputTransformer:
+            InputPathsMap:
+              commitId: "$.detail.commitId"
+            InputTemplate: |
+              {
+                "sourceVersion": <commitId>
+              }
+
+  # ── EventBridge: pull request events ────────────────────────────────────────
+
+  PullRequestTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${RepositoryName}-ci-pullrequest"
+      Description: Trigger CI on pull request create or update
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Pull Request State Change
+        resources:
+          - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+        detail:
+          event:
+            - pullRequestCreated
+            - pullRequestSourceBranchUpdated
+      State: ENABLED
+      Targets:
+        - Id: CIBuildPR
+          Arn: !GetAtt CIProject.Arn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+          InputTransformer:
+            InputPathsMap:
+              sourceCommit: "$.detail.sourceCommit"
+            InputTemplate: |
+              {
+                "sourceVersion": <sourceCommit>
+              }
+
+  # ── IAM Role for EventBridge → CodeBuild ────────────────────────────────────
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${RepositoryName}-eventbridge-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartBuild
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: codebuild:StartBuild
+                Resource: !GetAtt CIProject.Arn
+
+Outputs:
+  CodeBuildProject:
+    Value: !Ref CIProject
+    Description: CodeBuild project name
+
+  DeployCommand:
+    Value: !Sub "aws cloudformation deploy --template-file infrastructure/ci.yml --stack-name ${RepositoryName}-ci --capabilities CAPABILITY_NAMED_IAM --parameter-overrides RepositoryName=${RepositoryName}"
+    Description: Command to deploy this stack

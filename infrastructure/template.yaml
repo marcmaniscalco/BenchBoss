@@ -37,7 +37,7 @@ Resources:
   BenchBossFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: ..
       Handler: lambda_function.lambda_handler
       Policies:
         - DynamoDBCrudPolicy:
@@ -58,7 +58,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Timeout: 30
-      CodeUri: .
+      CodeUri: ..
       Handler: stream_lambda_handler.stream_lambda_handler
       Policies:
         - DynamoDBReadPolicy:

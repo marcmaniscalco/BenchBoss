@@ -13,3 +13,6 @@ select = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["bench_boss"]
+
+[tool.pytest.ini_options]
+addopts = "--cov-fail-under=90"
