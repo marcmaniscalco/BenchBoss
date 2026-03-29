@@ -279,10 +279,10 @@ class TestRemoveRsvp:
         for a in ("accepted", "declined", "tentative"):
             assert "user1" not in result.get(a, [])
 
-    def test_no_error_when_user_not_in_any_action(self, mock_table):
+    def test_raises_when_user_not_in_any_action(self, mock_table):
         mock_table.get_item.return_value = {"Item": _make_event()}
-        result = remove_rsvp("key1", "user1")
-        assert result["accepted"] == []
+        with pytest.raises(ValueError, match="not in the RSVP list"):
+            remove_rsvp("key1", "user1")
 
     def test_raises_when_event_not_found(self, mock_table):
         mock_table.get_item.return_value = {}

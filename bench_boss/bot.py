@@ -372,8 +372,8 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     # remove_rsvp_modal
     try:
         event = remove_rsvp(event_key, user_id)
-    except ValueError:
-        return _ephemeral("Event not found.")
+    except ValueError as e:
+        return _ephemeral(str(e))
     except Exception as e:
         logger.error("Failed to remove RSVP for event %s: %s", event_key, e)
         return _ephemeral(f"Failed to remove RSVP: {e}")

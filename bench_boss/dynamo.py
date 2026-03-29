@@ -147,6 +147,9 @@ def remove_rsvp(event_key: str, user_id: str) -> dict:
         logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
+    if not any(user_id in event.get(a, []) for a in RSVP_ACTIONS):
+        raise ValueError("User is not in the RSVP list.")
+
     _clear_user_from_rsvps(event, user_id)
     _table().put_item(Item=event)
     return event

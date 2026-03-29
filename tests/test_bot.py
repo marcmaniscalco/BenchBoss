@@ -914,6 +914,12 @@ class TestRsvpEditModalSubmit:
         assert kwargs["target"] == _update_channel_message
         assert kwargs["args"] == (event, "tok")
 
+    def test_remove_user_not_in_list_returns_ephemeral_error(self):
+        with patch("bench_boss.bot.remove_rsvp", side_effect=ValueError("User is not in the RSVP list.")):
+            result = handle_interaction(make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"), bot_token="tok")
+        assert result["body"]["data"]["flags"] == 64
+        assert "not in the RSVP list" in result["body"]["data"]["content"]
+
     def test_remove_starts_channel_update_thread(self):
         event = make_stored_event(channel_id="ch1", message_id="m1")
         with (
