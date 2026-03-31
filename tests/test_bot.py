@@ -442,17 +442,44 @@ class TestRsvpInteraction:
 # ---------------------------------------------------------------------------
 
 
-def make_delete_body(event_key: str, app_id: str = "app1", token: str = "tok1") -> dict:
+def make_delete_body(
+    event_key: str,
+    app_id: str = "app1",
+    token: str = "tok1",
+    permissions: str = "8",  # 8 = Administrator bit
+) -> dict:
     return {
         "type": MESSAGE_COMPONENT,
         "application_id": app_id,
         "token": token,
-        "member": {"user": {"id": "user1"}},
+        "member": {"user": {"id": "user1"}, "permissions": permissions},
         "data": {"custom_id": f"delete:{event_key}"},
     }
 
 
 class TestDeleteInteraction:
+    def test_delete_rejected_for_non_admin(self):
+        result = handle_interaction(make_delete_body("key1", permissions="0"))
+        assert result["statusCode"] == 200
+        assert result["body"]["data"]["flags"] == 64
+        assert "permission" in result["body"]["data"]["content"].lower()
+
+    def test_delete_allowed_for_admin(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.threading.Thread"),
+        ):
+            result = handle_interaction(make_delete_body("key1", permissions="8"))
+        assert result["body"]["type"] == DEFERRED_UPDATE_MESSAGE
+
+    def test_delete_allowed_when_permissions_include_administrator_among_others(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.threading.Thread"),
+        ):
+            result = handle_interaction(make_delete_body("key1", permissions=str(8 | 64)))
+        assert result["body"]["type"] == DEFERRED_UPDATE_MESSAGE
+
     def test_delete_calls_delete_event(self):
         with (
             patch("bench_boss.bot.delete_event") as mock_delete,
@@ -487,7 +514,7 @@ class TestDeleteInteraction:
             patch("bench_boss.bot.threading.Thread") as mock_thread,
         ):
             handle_interaction(
-                {"type": MESSAGE_COMPONENT, "data": {"custom_id": "delete:key1"}}
+                {"type": MESSAGE_COMPONENT, "member": {"permissions": "8"}, "data": {"custom_id": "delete:key1"}}
             )
         mock_thread.assert_not_called()
 

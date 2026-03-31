@@ -49,6 +49,17 @@ MODAL = 9
 
 _ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative"}
 
+_ADMINISTRATOR = 1 << 3
+
+
+def _is_admin(body: dict) -> bool:
+    """Return True if the interacting member has the Administrator permission."""
+    permissions = body.get("member", {}).get("permissions", "0")
+    try:
+        return bool(int(permissions) & _ADMINISTRATOR)
+    except (ValueError, TypeError):
+        return False
+
 
 def verify_signature(
     raw_body: bytes, signature: str, timestamp: str, public_key: str
@@ -257,6 +268,9 @@ def _handle_rsvp(body: dict) -> dict:
 
 
 def _handle_delete(body: dict, bot_token: str) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("You don't have permission to delete events.")
+
     custom_id = body.get("data", {}).get("custom_id", "")
     event_key = custom_id.split(":", 1)[1]
     logger.info("Deleting event %s", event_key)
