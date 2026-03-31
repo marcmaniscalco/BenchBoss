@@ -18,6 +18,7 @@ from bench_boss.bot import (
     PING,
     PONG,
     UPDATE_MESSAGE,
+    _delete_channel_message,
     _delete_original_message,
     _fetch_and_store_message_ref,
     _format_event_line,
@@ -26,6 +27,7 @@ from bench_boss.bot import (
     handle_interaction,
     verify_signature,
 )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -289,38 +291,6 @@ class TestScheduleInteraction:
             handle_interaction(body)
         mock_save.assert_called_once()
 
-    def test_starts_message_ref_thread_when_app_id_and_token_present(self):
-        event = make_calendar_event()
-        body = {
-            "type": APPLICATION_COMMAND,
-            "guild_id": "g1",
-            "application_id": "app1",
-            "token": "tok1",
-            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
-        }
-        with (
-            patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.save_event"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            mock_reader.return_value.get_upcoming.return_value = [event]
-            handle_interaction(body)
-        mock_thread.assert_called_once()
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["target"] == _fetch_and_store_message_ref
-        assert kwargs["args"] == ("app1", "tok1", mock_thread.call_args[1]["args"][2])
-
-    def test_no_thread_when_app_id_missing(self):
-        event = make_calendar_event()
-        with (
-            patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.save_event"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            mock_reader.return_value.get_upcoming.return_value = [event]
-            handle_interaction(make_schedule_body("https://example.com/cal.ics"))
-        mock_thread.assert_not_called()
-
     def test_save_event_called_with_event_details(self):
         event = make_calendar_event("My Event")
         with (
@@ -452,9 +422,12 @@ def make_delete_body(
         "type": MESSAGE_COMPONENT,
         "application_id": app_id,
         "token": token,
+        "channel_id": "ch1",
+        "message": {"id": "m1"},
         "member": {"user": {"id": "user1"}, "permissions": permissions},
         "data": {"custom_id": f"delete:{event_key}"},
     }
+
 
 
 class TestDeleteInteraction:
@@ -464,64 +437,137 @@ class TestDeleteInteraction:
         assert result["body"]["data"]["flags"] == 64
         assert "permission" in result["body"]["data"]["content"].lower()
 
-    def test_delete_allowed_for_admin(self):
-        with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            result = handle_interaction(make_delete_body("key1", permissions="8"))
-        assert result["body"]["type"] == DEFERRED_UPDATE_MESSAGE
+    def test_delete_returns_ephemeral_confirmation(self):
+        result = handle_interaction(make_delete_body("key1"))
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["flags"] == 64
+        assert "sure" in result["body"]["data"]["content"].lower()
+
+    def test_delete_confirmation_has_delete_and_cancel_buttons(self):
+        result = handle_interaction(make_delete_body("key1"))
+        components = result["body"]["data"]["components"]
+        assert len(components) == 1
+        buttons = components[0]["components"]
+        custom_ids = [b["custom_id"] for b in buttons]
+        assert any("delete_confirm" in cid for cid in custom_ids)
+        assert any("delete_cancel" in cid for cid in custom_ids)
+
+    def test_delete_confirmation_encodes_channel_and_message_in_confirm_id(self):
+        result = handle_interaction(make_delete_body("key1"))
+        buttons = result["body"]["data"]["components"][0]["components"]
+        confirm_id = next(b["custom_id"] for b in buttons if "delete_confirm" in b["custom_id"])
+        assert "ch1" in confirm_id
+        assert "m1" in confirm_id
 
     def test_delete_allowed_when_permissions_include_administrator_among_others(self):
-        with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.threading.Thread"),
-        ):
-            result = handle_interaction(make_delete_body("key1", permissions=str(8 | 64)))
-        assert result["body"]["type"] == DEFERRED_UPDATE_MESSAGE
+        result = handle_interaction(make_delete_body("key1", permissions=str(8 | 64)))
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["flags"] == 64
 
-    def test_delete_calls_delete_event(self):
+    def test_delete_does_not_call_delete_event(self):
+        with patch("bench_boss.bot.delete_event") as mock_delete:
+            handle_interaction(make_delete_body("key1"))
+        mock_delete.assert_not_called()
+
+
+def make_delete_confirm_body(
+    event_key: str,
+    channel_id: str = "ch1",
+    message_id: str = "m1",
+    permissions: str = "8",
+) -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "channel_id": "eph_ch",
+        "message": {"id": "eph_m"},
+        "member": {"user": {"id": "user1"}, "permissions": permissions},
+        "data": {"custom_id": f"delete_confirm:{event_key}:{channel_id}:{message_id}"},
+    }
+
+
+class TestDeleteConfirmInteraction:
+    def test_confirm_rejected_for_non_admin(self):
+        result = handle_interaction(make_delete_confirm_body("key1", permissions="0"))
+        assert result["body"]["data"]["flags"] == 64
+        assert "permission" in result["body"]["data"]["content"].lower()
+
+    def test_confirm_calls_delete_event(self):
         with (
             patch("bench_boss.bot.delete_event") as mock_delete,
-            patch("bench_boss.bot.threading.Thread"),
+            patch("bench_boss.bot.requests.delete"),
         ):
-            handle_interaction(make_delete_body("key1"))
+            handle_interaction(make_delete_confirm_body("key1"))
         mock_delete.assert_called_once_with("key1")
 
-    def test_delete_returns_deferred_update(self):
+    def test_confirm_calls_channel_api_with_correct_args(self):
+        ok_resp = MagicMock()
+        ok_resp.ok = True
         with (
             patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.threading.Thread"),
+            patch("bench_boss.bot.requests.delete", return_value=ok_resp) as mock_del,
         ):
-            result = handle_interaction(make_delete_body("key1"))
+            handle_interaction(make_delete_confirm_body("key1"), bot_token="tok")
+        mock_del.assert_called_once()
+        url = mock_del.call_args[0][0]
+        assert "channels/ch1/messages/m1" in url
+        assert mock_del.call_args[1]["headers"]["Authorization"] == "Bot tok"
+
+    def test_confirm_returns_update_message_with_confirmation(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.requests.delete"),
+        ):
+            result = handle_interaction(make_delete_confirm_body("key1"))
         assert result["statusCode"] == 200
-        assert result["body"]["type"] == DEFERRED_UPDATE_MESSAGE
+        assert result["body"]["type"] == UPDATE_MESSAGE
+        assert result["body"]["data"]["components"] == []
 
-    def test_delete_starts_background_thread(self):
+    def test_confirm_event_not_in_db_still_deletes_message(self):
+        ok_resp = MagicMock()
+        ok_resp.ok = True
         with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
+            patch("bench_boss.bot.delete_event", side_effect=ValueError("not found")),
+            patch("bench_boss.bot.requests.delete", return_value=ok_resp) as mock_del,
         ):
-            handle_interaction(make_delete_body("key1", app_id="myapp", token="mytoken"))
-        mock_thread.assert_called_once()
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["target"] == _delete_original_message
-        assert kwargs["args"] == ("myapp", "mytoken")
+            result = handle_interaction(make_delete_confirm_body("key1"), bot_token="tok")
+        assert result["body"]["type"] == UPDATE_MESSAGE
+        mock_del.assert_called_once()
 
-    def test_delete_skips_thread_when_no_app_id_or_token(self):
-        with (
-            patch("bench_boss.bot.delete_event"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            handle_interaction(
-                {"type": MESSAGE_COMPONENT, "member": {"permissions": "8"}, "data": {"custom_id": "delete:key1"}}
-            )
-        mock_thread.assert_not_called()
-
-    def test_delete_event_failure_returns_error(self):
+    def test_confirm_db_error_returns_ephemeral_error(self):
         with patch("bench_boss.bot.delete_event", side_effect=Exception("DB error")):
-            result = handle_interaction(make_delete_body("key1"))
+            result = handle_interaction(make_delete_confirm_body("key1"))
+        assert result["body"]["data"]["flags"] == 64
         assert "Failed to delete event" in result["body"]["data"]["content"]
+
+    def test_confirm_channel_api_error_does_not_propagate(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.requests.delete", side_effect=Exception("SSL EOF")),
+        ):
+            result = handle_interaction(make_delete_confirm_body("key1"), bot_token="tok")
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == UPDATE_MESSAGE
+
+    def test_confirm_skips_channel_api_when_no_bot_token(self):
+        with (
+            patch("bench_boss.bot.delete_event"),
+            patch("bench_boss.bot.requests.delete") as mock_del,
+        ):
+            handle_interaction(make_delete_confirm_body("key1"), bot_token="")
+        mock_del.assert_not_called()
+
+
+class TestDeleteCancelInteraction:
+    def test_cancel_returns_update_message(self):
+        body = {
+            "type": MESSAGE_COMPONENT,
+            "data": {"custom_id": "delete_cancel:key1"},
+        }
+        result = handle_interaction(body)
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == UPDATE_MESSAGE
+        assert result["body"]["data"]["components"] == []
 
 
 class TestUpdateChannelMessage:

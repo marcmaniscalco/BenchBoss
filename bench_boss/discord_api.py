@@ -165,6 +165,31 @@ def build_rsvp_components(event_key: str) -> list[dict]:
 
 
 
+def build_delete_confirm_buttons(
+    event_key: str, channel_id: str, message_id: str
+) -> list[dict]:
+    """Return an action row with Delete and Cancel buttons for event deletion confirmation."""
+    return [
+        {
+            "type": 1,  # ACTION_ROW
+            "components": [
+                {
+                    "type": 2,  # BUTTON
+                    "style": 4,  # DANGER (red)
+                    "label": "Delete",
+                    "custom_id": f"delete_confirm:{event_key}:{channel_id}:{message_id}",
+                },
+                {
+                    "type": 2,  # BUTTON
+                    "style": 2,  # SECONDARY (gray)
+                    "label": "Cancel",
+                    "custom_id": f"delete_cancel:{event_key}",
+                },
+            ],
+        }
+    ]
+
+
 def build_no_events_embed() -> dict:
     """Build an embed shown when the calendar has no more upcoming events."""
     return {

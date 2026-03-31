@@ -15,6 +15,7 @@ from bench_boss.calendar import WebCalReader
 from bench_boss.constants import MESSAGE_FETCH_DELAY
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
+    build_delete_confirm_buttons,
     build_event_embed,
     build_remove_rsvp_modal,
     build_rsvp_components,
@@ -122,7 +123,11 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
     if interaction_type == MESSAGE_COMPONENT:
         custom_id = body.get("data", {}).get("custom_id", "")
         if custom_id.startswith("delete:"):
-            return _handle_delete(body, bot_token)
+            return _handle_delete(body)
+        if custom_id.startswith("delete_confirm:"):
+            return _handle_delete_confirm(body, bot_token)
+        if custom_id.startswith("delete_cancel:"):
+            return _handle_delete_cancel()
         if custom_id.startswith("add_rsvp:"):
             return _handle_add_rsvp_button(body)
         if custom_id.startswith("remove_rsvp:"):
@@ -195,13 +200,6 @@ def _handle_schedule(
         logger.error("Failed to save event: %s", e)
         return _message(f"Failed to save event: {e}")
 
-    if app_id and interaction_token:
-        threading.Thread(
-            target=_fetch_and_store_message_ref,
-            args=(app_id, interaction_token, event_key),
-            daemon=True,
-        ).start()
-
     embed = build_event_embed(
         name=ev.summary,
         start=ev.start,
@@ -267,34 +265,61 @@ def _handle_rsvp(body: dict) -> dict:
     }
 
 
-def _handle_delete(body: dict, bot_token: str) -> dict:
+def _handle_delete(body: dict) -> dict:
     if not _is_admin(body):
         return _ephemeral("You don't have permission to delete events.")
 
-    custom_id = body.get("data", {}).get("custom_id", "")
-    event_key = custom_id.split(":", 1)[1]
-    logger.info("Deleting event %s", event_key)
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    channel_id = body.get("channel_id", "")
+    message_id = body.get("message", {}).get("id", "")
+
+    components = build_delete_confirm_buttons(event_key, channel_id, message_id)
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {
+                "content": "Are you sure you want to delete this event?",
+                "components": components,
+                "flags": 64,
+            },
+        },
+    }
+
+
+def _handle_delete_confirm(body: dict, bot_token: str) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("You don't have permission to delete events.")
+
+    # custom_id format: delete_confirm:{event_key}:{channel_id}:{message_id}
+    parts = body.get("data", {}).get("custom_id", "").split(":", 3)
+    if len(parts) != 4:
+        return _ephemeral("Invalid delete confirmation.")
+    _, event_key, channel_id, message_id = parts
 
     try:
         delete_event(event_key)
+        logger.info("Deleted event %s", event_key)
     except ValueError:
         logger.debug("Event %s not found in DB, continuing with message deletion", event_key)
     except Exception as e:
         logger.error("Failed to delete event %s: %s", event_key, e)
-        return _message(f"Failed to delete event: {e}")
+        return _ephemeral(f"Failed to delete event: {e}")
 
-    app_id = body.get("application_id", "")
-    token = body.get("token", "")
-    if app_id and token:
-        threading.Thread(
-            target=_delete_original_message,
-            args=(app_id, token),
-            daemon=True,
-        ).start()
+    if channel_id and message_id and bot_token:
+        _delete_channel_message(channel_id, message_id, bot_token)
 
-    # Acknowledge the interaction immediately (type 6 = DEFERRED_UPDATE_MESSAGE).
-    # The background thread deletes the message after the callback is sent.
-    return {"statusCode": 200, "body": {"type": DEFERRED_UPDATE_MESSAGE}}
+    return {
+        "statusCode": 200,
+        "body": {"type": UPDATE_MESSAGE, "data": {"content": "Event deleted.", "components": []}},
+    }
+
+
+def _handle_delete_cancel() -> dict:
+    return {
+        "statusCode": 200,
+        "body": {"type": UPDATE_MESSAGE, "data": {"content": "Deletion cancelled.", "components": []}},
+    }
 
 
 def _store_button_refs(body: dict, event_key: str) -> None:
@@ -462,6 +487,26 @@ def _delete_original_message(app_id: str, token: str) -> None:
         f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
         timeout=10,
     )
+
+
+def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) -> None:
+    """Delete an event embed from the channel using the bot token."""
+    try:
+        resp = requests.delete(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
+            headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning(
+                "Failed to delete channel message %s in channel %s: %s",
+                message_id, channel_id, resp.status_code,
+            )
+    except Exception as e:
+        logger.error(
+            "Error deleting channel message %s in channel %s: %s",
+            message_id, channel_id, e,
+        )
 
 
 def _handle_events(webcal_url: str, body: dict, bot_token: str) -> dict:
