@@ -74,10 +74,13 @@ def _build_gcal_url(
     return "https://calendar.google.com/calendar/render?" + urlencode(params)
 
 
-def _rsvp_field(action: str, users: list[str]) -> dict:
+def _rsvp_field(action: str, users: list[str], names: dict[str, str] | None = None) -> dict:
     label = _RSVP_LABELS[action]
     count = len(users)
-    value = "\n".join(f"<@{uid}>" for uid in users) if users else "-"
+    if users:
+        value = "\n".join(names[uid] if names and uid in names else f"<@{uid}>" for uid in users)
+    else:
+        value = "-"
     return {"name": f"{label} ({count})", "value": value, "inline": True}
 
 
@@ -90,6 +93,7 @@ def build_event_embed(
     accepted: list[str],
     declined: list[str],
     tentative: list[str],
+    names: dict[str, str] | None = None,
 ) -> dict:
     """Build a Discord embed dict in Apollo style."""
     fields: list[dict] = [
@@ -116,9 +120,9 @@ def build_event_embed(
 
     fields.extend(
         [
-            _rsvp_field("accepted", accepted),
-            _rsvp_field("declined", declined),
-            _rsvp_field("tentative", tentative),
+            _rsvp_field("accepted", accepted, names),
+            _rsvp_field("declined", declined, names),
+            _rsvp_field("tentative", tentative, names),
         ]
     )
 

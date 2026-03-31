@@ -261,6 +261,16 @@ class TestSetRsvp:
         set_rsvp("key1", "user1", "accepted")
         mock_table.put_item.assert_called_once()
 
+    def test_stores_display_name_when_provided(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = set_rsvp("key1", "user1", "accepted", display_name="Bob")
+        assert result["member_names"]["user1"] == "Bob"
+
+    def test_no_display_name_stored_when_none(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = set_rsvp("key1", "user1", "accepted", display_name=None)
+        assert "user1" not in result.get("member_names", {})
+
 
 # ---------------------------------------------------------------------------
 # remove_rsvp
@@ -293,6 +303,13 @@ class TestRemoveRsvp:
         mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
         remove_rsvp("key1", "user1")
         mock_table.put_item.assert_called_once()
+
+    def test_removes_display_name_on_removal(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(
+            accepted=["user1"], member_names={"user1": "Alice"}
+        )}
+        result = remove_rsvp("key1", "user1")
+        assert "user1" not in result["member_names"]
 
 
 # ---------------------------------------------------------------------------
@@ -341,3 +358,20 @@ class TestUpdateRsvp:
         result = update_rsvp("key1", "user2", "accepted")
         assert "user1" in result["accepted"]
         assert "user2" in result["accepted"]
+
+    def test_stores_display_name_when_adding(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = update_rsvp("key1", "user1", "accepted", display_name="Alice")
+        assert result["member_names"]["user1"] == "Alice"
+
+    def test_removes_display_name_on_toggle_off(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(
+            accepted=["user1"], member_names={"user1": "Alice"}
+        )}
+        result = update_rsvp("key1", "user1", "accepted")
+        assert "user1" not in result["member_names"]
+
+    def test_no_display_name_stored_when_none(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = update_rsvp("key1", "user1", "accepted", display_name=None)
+        assert "user1" not in result.get("member_names", {})

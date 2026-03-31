@@ -229,10 +229,17 @@ def _handle_rsvp(body: dict) -> dict:
 
     _, action, event_key = parts
     member = body.get("member") or {}
-    user_id = member.get("user", {}).get("id") or body.get("user", {}).get("id", "")
+    user_data = member.get("user") or body.get("user") or {}
+    user_id = user_data.get("id", "")
+    display_name = (
+        member.get("nick")
+        or user_data.get("global_name")
+        or user_data.get("username")
+        or None
+    )
 
     try:
-        event = update_rsvp(event_key, user_id, action)
+        event = update_rsvp(event_key, user_id, action, display_name)
         logger.info("RSVP %s for event %s by user %s", action, event_key, user_id)
     except ValueError:
         logger.warning("RSVP failed — event not found: %s", event_key)
@@ -253,6 +260,7 @@ def _handle_rsvp(body: dict) -> dict:
         accepted=event.get("accepted", []),
         declined=event.get("declined", []),
         tentative=event.get("tentative", []),
+        names=event.get("member_names") or {},
     )
     components = build_rsvp_components(event_key)
 
@@ -440,6 +448,7 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         accepted=event.get("accepted", []),
         declined=event.get("declined", []),
         tentative=event.get("tentative", []),
+        names=event.get("member_names") or {},
     )
     event_key = event["event_key"]
     components = build_rsvp_components(event_key)

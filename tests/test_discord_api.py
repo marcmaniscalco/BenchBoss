@@ -94,12 +94,31 @@ class TestBuildEventEmbed:
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
         assert "Accepted (2)" in accepted_field["name"]
 
-    def test_rsvp_field_shows_user_mentions(self):
+    def test_rsvp_field_falls_back_to_mention_without_names(self):
         embed = build_event_embed(
             "Event", START, None, None, None, ["user1"], [], []
         )
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
         assert "<@user1>" in accepted_field["value"]
+
+    def test_rsvp_field_shows_display_name_without_at_symbol(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["user1"], [], [],
+            names={"user1": "Alice"},
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "Alice" in accepted_field["value"]
+        assert "<@user1>" not in accepted_field["value"]
+        assert "@" not in accepted_field["value"]
+
+    def test_rsvp_field_mixes_names_and_mentions(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["user1", "user2"], [], [],
+            names={"user1": "Alice"},
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "Alice" in accepted_field["value"]
+        assert "<@user2>" in accepted_field["value"]
 
     def test_rsvp_field_shows_dash_when_empty(self):
         embed = build_event_embed("Event", START, None, None, None, [], [], [])

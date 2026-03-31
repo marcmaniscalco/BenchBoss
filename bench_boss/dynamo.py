@@ -122,7 +122,7 @@ def _clear_user_from_rsvps(event: dict, user_id: str) -> None:
         event[a] = users
 
 
-def set_rsvp(event_key: str, user_id: str, action: str) -> dict:
+def set_rsvp(event_key: str, user_id: str, action: str, display_name: str | None = None) -> dict:
     """
     Set a user's RSVP to a specific action without toggling.
 
@@ -136,6 +136,10 @@ def set_rsvp(event_key: str, user_id: str, action: str) -> dict:
 
     _clear_user_from_rsvps(event, user_id)
     event[action] = event.get(action, []) + [user_id]
+    names = dict(event.get("member_names") or {})
+    if display_name:
+        names[user_id] = display_name
+    event["member_names"] = names
     _table().put_item(Item=event)
     return event
 
@@ -151,11 +155,14 @@ def remove_rsvp(event_key: str, user_id: str) -> dict:
         raise ValueError("User is not in the RSVP list.")
 
     _clear_user_from_rsvps(event, user_id)
+    names = dict(event.get("member_names") or {})
+    names.pop(user_id, None)
+    event["member_names"] = names
     _table().put_item(Item=event)
     return event
 
 
-def update_rsvp(event_key: str, user_id: str, action: str) -> dict:
+def update_rsvp(event_key: str, user_id: str, action: str, display_name: str | None = None) -> dict:
     """
     Toggle a user's RSVP for an event.
 
@@ -170,8 +177,14 @@ def update_rsvp(event_key: str, user_id: str, action: str) -> dict:
 
     already_in_action = user_id in event.get(action, [])
     _clear_user_from_rsvps(event, user_id)
+    names = dict(event.get("member_names") or {})
     if not already_in_action:
         event[action] = event.get(action, []) + [user_id]
+        if display_name:
+            names[user_id] = display_name
+    else:
+        names.pop(user_id, None)
+    event["member_names"] = names
 
     _table().put_item(Item=event)
     return event

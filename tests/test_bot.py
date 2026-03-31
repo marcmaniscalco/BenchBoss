@@ -361,7 +361,7 @@ class TestRsvpInteraction:
         with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
             handle_interaction(make_rsvp_body("rsvp:tentative:abc-key", "user99"))
 
-        mock_update.assert_called_once_with("abc-key", "user99", "tentative")
+        mock_update.assert_called_once_with("abc-key", "user99", "tentative", None)
 
     def test_event_not_found_returns_error_message(self):
         with patch("bench_boss.bot.update_rsvp", side_effect=ValueError("not found")):
@@ -392,7 +392,7 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "guild-user", "accepted")
+        mock_update.assert_called_once_with("key1", "guild-user", "accepted", None)
 
     def test_user_id_from_user_when_in_dm(self):
         updated = make_stored_event()
@@ -404,7 +404,57 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:declined:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "dm-user", "declined")
+        mock_update.assert_called_once_with("key1", "dm-user", "declined", None)
+
+    def test_server_nick_used_as_display_name(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {
+                        "nick": "Server Nick",
+                        "user": {"id": "user1", "global_name": "Alice"},
+                    },
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "accepted", "Server Nick")
+
+    def test_global_name_used_when_no_server_nick(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"user": {"id": "user1", "global_name": "Alice"}},
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "accepted", "Alice")
+
+    def test_username_used_when_no_global_name(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"user": {"id": "user1", "username": "alice123"}},
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "accepted", "alice123")
+
+    def test_embed_shows_display_name_when_member_names_present(self):
+        updated = make_stored_event(accepted=["user1"], member_names={"user1": "Alice"})
+        body = make_rsvp_body("rsvp:accepted:test-key", "user1")
+        with patch("bench_boss.bot.update_rsvp", return_value=updated):
+            result = handle_interaction(body)
+
+        fields = result["body"]["data"]["embeds"][0]["fields"]
+        accepted_field = next(f for f in fields if "Accepted" in f["name"])
+        assert "Alice" in accepted_field["value"]
+        assert "<@user1>" not in accepted_field["value"]
 
 
 # ---------------------------------------------------------------------------
