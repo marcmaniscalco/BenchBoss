@@ -39,6 +39,9 @@ Resources:
     Properties:
       CodeUri: .
       Handler: lambda_function.lambda_handler
+      SnapStart:
+        ApplyOn: PublishedVersions
+      AutoPublishAlias: live
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BenchBossTable
