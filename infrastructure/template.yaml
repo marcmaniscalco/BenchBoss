@@ -63,6 +63,9 @@ Resources:
       Timeout: 30
       CodeUri: .
       Handler: stream_lambda_handler.stream_lambda_handler
+      SnapStart:
+        ApplyOn: PublishedVersions
+      AutoPublishAlias: live
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref BenchBossTable
