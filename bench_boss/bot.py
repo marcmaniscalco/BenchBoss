@@ -379,6 +379,25 @@ def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | Non
     return members[0]["user"]["id"] if members else None
 
 
+def _fetch_member_display_name(guild_id: str, user_id: str, bot_token: str) -> str | None:
+    """Fetch a guild member's display name (server nick > global name > username)."""
+    resp = requests.get(
+        f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}",
+        headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+        timeout=10,
+    )
+    if not resp.ok:
+        logger.warning("Failed to fetch member %s from guild %s: %s", user_id, guild_id, resp.status_code)
+        return None
+    member = resp.json()
+    return (
+        member.get("nick")
+        or member.get("user", {}).get("global_name")
+        or member.get("user", {}).get("username")
+        or None
+    )
+
+
 def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     custom_id = body.get("data", {}).get("custom_id", "")
     modal_type, event_key = custom_id.split(":", 1)
@@ -400,21 +419,24 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         if not user_id:
             return _ephemeral("Could not find that user — try again with their @mention or numeric ID.")
 
+    guild_id = body.get("guild_id")
+    display_name = _fetch_member_display_name(guild_id, user_id, bot_token) if guild_id and bot_token else None
+
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
         action = _ACTION_ALIASES.get(action, action)
         if action not in RSVP_ACTIONS:
             return _ephemeral("Invalid RSVP status — use: accepted, declined, or tentative.")
         try:
-            event = set_rsvp(event_key, user_id, action)
+            event = set_rsvp(event_key, user_id, action, display_name)
         except ValueError:
             return _ephemeral("Event not found.")
         except Exception as e:
             logger.error("Failed to add RSVP for event %s: %s", event_key, e)
             return _ephemeral(f"Failed to update RSVP: {e}")
         if bot_token:
-            threading.Thread(target=_update_channel_message, args=(event, bot_token), daemon=True).start()
-        return _ephemeral(f"Added <@{user_id}> as **{action}**.")
+            _update_channel_message(event, bot_token)
+        return _ephemeral(f"Added **{display_name or user_id}** as **{action}**.")
 
     # remove_rsvp_modal
     try:
@@ -425,8 +447,8 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         logger.error("Failed to remove RSVP for event %s: %s", event_key, e)
         return _ephemeral(f"Failed to remove RSVP: {e}")
     if bot_token:
-        threading.Thread(target=_update_channel_message, args=(event, bot_token), daemon=True).start()
-    return _ephemeral(f"Removed <@{user_id}> from the RSVP.")
+        _update_channel_message(event, bot_token)
+    return _ephemeral(f"Removed **{display_name or user_id}** from the RSVP.")
 
 
 def _update_channel_message(event: dict, bot_token: str) -> None:
@@ -453,14 +475,17 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
     event_key = event["event_key"]
     components = build_rsvp_components(event_key)
 
-    interaction_token = event.get("interaction_token")
-    app_id = event.get("app_id")
-    if interaction_token and app_id and message_id:
-        url = f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/{message_id}"
-        headers = {"Content-Type": "application/json"}
-    else:
+    if bot_token:
         url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
         headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    else:
+        interaction_token = event.get("interaction_token")
+        app_id = event.get("app_id")
+        if not interaction_token or not app_id:
+            logger.warning("Skipping channel update for event %s — no bot token or interaction token", event_key)
+            return
+        url = f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/{message_id}"
+        headers = {"Content-Type": "application/json"}
 
     resp = requests.patch(url, json={"embeds": [embed], "components": components}, headers=headers, timeout=10)
     if resp.ok:
