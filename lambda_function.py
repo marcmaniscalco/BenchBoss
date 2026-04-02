@@ -6,6 +6,7 @@ import base64
 import json
 import os
 
+import boto3
 from aws_lambda_powertools import Logger
 
 from bench_boss.bot import handle_interaction, verify_signature
@@ -14,6 +15,22 @@ logger = Logger(service="bench-boss")
 
 DISCORD_PUBLIC_KEY = os.environ["DISCORD_PUBLIC_KEY"]
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
+
+# SnapStart lifecycle hooks — no-op outside Lambda SnapStart environments.
+try:
+    from snapshot_restore_py import register_after_restore, register_before_snapshot
+
+    @register_before_snapshot
+    def _before_snapshot() -> None:
+        """All heavy modules are imported at module level; nothing extra needed."""
+
+    @register_after_restore
+    def _after_restore() -> None:
+        """Discard the boto3 default session so restored connection pools are not reused."""
+        boto3.DEFAULT_SESSION = None
+
+except ImportError:
+    pass
 
 
 def lambda_handler(event: dict, context) -> dict:
