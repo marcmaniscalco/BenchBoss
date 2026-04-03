@@ -1,14 +1,14 @@
 """
-Core bot logic — shared between local dev server and Lambda.
+Core bot logic.
 """
 
+import logging
 import threading
 import time
 import uuid
 from datetime import UTC, date, datetime
 
 import requests
-from aws_lambda_powertools import Logger
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
@@ -33,7 +33,7 @@ from bench_boss.dynamo import (
     update_rsvp,
 )
 
-logger = Logger(service="bench-boss")
+logger = logging.getLogger(__name__)
 
 # Interaction types
 PING = 1

@@ -1,12 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Transform: AWS::Serverless-2016-10-31
-Description: BenchBoss — Serverless Discord Bot
-
-Globals:
-  Function:
-    Timeout: 10
-    Runtime: python3.13
-    MemorySize: 512
+Description: BenchBoss — Discord Bot on AWS App Runner
 
 Parameters:
   DiscordPublicKey:
@@ -17,8 +10,14 @@ Parameters:
     Type: String
     Description: "Discord bot token (Developer Portal > Bot > Token)"
     NoEcho: true
+  ImageUri:
+    Type: String
+    Description: "ECR image URI including tag (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/bench-boss:latest)"
 
 Resources:
+
+  # ── DynamoDB ────────────────────────────────────────────────────────────────
+
   BenchBossTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -35,56 +34,92 @@ Resources:
       StreamSpecification:
         StreamViewType: OLD_IMAGE
 
-  BenchBossFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: .
-      Handler: lambda_function.lambda_handler
-      SnapStart:
-        ApplyOn: PublishedVersions
-      AutoPublishAlias: live
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref BenchBossTable
-      Environment:
-        Variables:
-          DISCORD_PUBLIC_KEY: !Ref DiscordPublicKey
-          DISCORD_TOKEN: !Ref DiscordToken
-          DYNAMODB_TABLE: !Ref BenchBossTable
-      Events:
-        Interactions:
-          Type: Api
-          Properties:
-            Path: /interactions
-            Method: POST
+  # ── IAM ─────────────────────────────────────────────────────────────────────
 
-  BenchBossStreamFunction:
-    Type: AWS::Serverless::Function
+  # Allows App Runner to pull the image from ECR
+  ECRAccessRole:
+    Type: AWS::IAM::Role
     Properties:
-      Timeout: 30
-      CodeUri: .
-      Handler: stream_lambda_handler.stream_lambda_handler
-      SnapStart:
-        ApplyOn: PublishedVersions
-      AutoPublishAlias: live
+      RoleName: bench-boss-ecr-access-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  # Grants the running container access to DynamoDB
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bench-boss-instance-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
       Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref BenchBossTable
-      Environment:
-        Variables:
-          DISCORD_TOKEN: !Ref DiscordToken
-          DYNAMODB_TABLE: !Ref BenchBossTable
-      Events:
-        Stream:
-          Type: DynamoDB
-          Properties:
-            Stream: !GetAtt BenchBossTable.StreamArn
-            StartingPosition: TRIM_HORIZON
-            FilterCriteria:
-              Filters:
-                - Pattern: '{"eventName": ["REMOVE"]}'
+        - PolicyName: bench-boss-dynamodb
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeTable
+                Resource: !GetAtt BenchBossTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodbstreams:GetRecords
+                  - dynamodbstreams:GetShardIterator
+                  - dynamodbstreams:DescribeStream
+                  - dynamodbstreams:ListStreams
+                Resource: !GetAtt BenchBossTable.StreamArn
+
+  # ── App Runner ───────────────────────────────────────────────────────────────
+
+  BenchBossService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: bench-boss
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt ECRAccessRole.Arn
+        AutoDeploymentsEnabled: true
+        ImageRepository:
+          ImageIdentifier: !Ref ImageUri
+          ImageRepositoryType: ECR
+          ImageConfiguration:
+            Port: "8080"
+            RuntimeEnvironmentVariables:
+              - Name: DISCORD_PUBLIC_KEY
+                Value: !Ref DiscordPublicKey
+              - Name: DISCORD_TOKEN
+                Value: !Ref DiscordToken
+              - Name: DYNAMODB_TABLE
+                Value: !Ref BenchBossTable
+      InstanceConfiguration:
+        Cpu: "256"
+        Memory: "512"
+        InstanceRoleArn: !GetAtt InstanceRole.Arn
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /health
+        Interval: 10
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
 
 Outputs:
   InteractionsUrl:
     Description: "Paste into Discord Developer Portal > General Information > Interactions Endpoint URL"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/interactions"
+    Value: !Sub "https://${BenchBossService.ServiceUrl}/interactions"

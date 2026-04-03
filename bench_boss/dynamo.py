@@ -3,13 +3,14 @@
 import os
 from datetime import UTC, datetime, timedelta
 
+import logging
+
 import boto3
-from aws_lambda_powertools import Logger
 from boto3.dynamodb.conditions import Attr
 
 from bench_boss.constants import EVENT_TTL_HOURS
 
-logger = Logger(service="bench-boss")
+logger = logging.getLogger(__name__)
 
 RSVP_ACTIONS = ("accepted", "declined", "tentative")
 

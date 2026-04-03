@@ -4,13 +4,13 @@ import uuid
 from datetime import UTC, datetime
 
 import requests
-from aws_lambda_powertools import Logger
+import logging
 
 from bench_boss.calendar import WebCalReader
 from bench_boss.discord_api import build_event_embed, build_no_events_embed, build_rsvp_components
 from bench_boss.dynamo import save_event, store_message_ref
 
-logger = Logger(service="bench-boss")
+logger = logging.getLogger(__name__)
 
 
 def handle_stream_records(records: list[dict], bot_token: str) -> None:

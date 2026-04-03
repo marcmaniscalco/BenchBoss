@@ -18,3 +18,23 @@ services:
       AWS_SECRET_ACCESS_KEY: local
     depends_on:
       - dynamodb-local
+
+  app:
+    image: bench-boss:latest
+    container_name: bench-boss-app
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - ../.env
+    environment:
+      DYNAMODB_TABLE: bench-boss-local
+      DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_SESSION_TOKEN: ""
+    depends_on:
+      - dynamodb-local

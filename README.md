@@ -1,7 +1,7 @@
-# BenchBoss — Serverless on AWS Lambda
+# BenchBoss — Discord Bot on AWS Fargate
 
-A Python Discord bot with a `/ping` command, deployable to AWS Lambda.
-Discord sends an HTTP POST for every slash command — no persistent process required.
+A Python Discord bot with a `/ping` command, deployable to AWS Fargate.
+Discord sends an HTTP POST for every slash command to a long-running Flask server running in a Fargate container.
 
 ---
 
@@ -13,20 +13,25 @@ BenchBoss/
 │   ├── bot.py              # Core logic — signature verification + command handling
 │   ├── calendar.py         # WebCalReader — fetches and parses iCal calendars
 │   ├── discord_api.py      # Embed and component builders
-│   └── dynamo.py           # DynamoDB persistence for event RSVP state
+│   ├── dynamo.py           # DynamoDB persistence for event RSVP state
+│   └── stream_handler.py   # DynamoDB stream event processor
 ├── tests/
 │   ├── test_bot.py         # Unit tests for bot logic
 │   ├── test_calendar.py    # Unit tests for calendar parsing
 │   ├── test_discord_api.py # Unit tests for embed/component builders
-│   └── test_dynamo.py      # Unit tests for DynamoDB helpers
+│   ├── test_dynamo.py      # Unit tests for DynamoDB helpers
+│   └── test_stream_handler.py
 ├── local/
 │   ├── docker-compose.yml      # DynamoDB Local + Admin UI for local development
 │   ├── local_server.py         # Flask server for local development and Discord testing
 │   └── create_local_table.py   # One-time script to create the local DynamoDB table
-├── lambda_function.py      # AWS Lambda entry point (production)
+├── infrastructure/
+│   └── template.yaml       # CloudFormation template (ECS Fargate + ALB + DynamoDB)
+├── server.py               # Fargate HTTP server entry point (gunicorn + Flask)
+├── stream_poller.py        # Fargate stream poller entry point (polls DynamoDB Streams)
+├── Dockerfile              # Container image used for both Fargate services
 ├── register_commands.py    # One-time script to register slash commands with Discord
-├── Pipfile                 # Python dependencies
-└── template.yaml           # AWS SAM deployment template
+└── Pipfile                 # Python dependencies
 ```
 
 ---
@@ -244,13 +249,11 @@ Registered 2 command(s):
 make server
 ```
 
-Discord credentials are loaded automatically from your `.env` file. `make server` sets `DYNAMODB_TABLE`, `DYNAMODB_ENDPOINT`, and fake AWS credentials for the local DynamoDB container.
+This builds the Docker image and starts the full stack — the app (gunicorn on port 8080), DynamoDB Local (port 8000), and the DynamoDB admin UI (port 8001). Credentials are loaded automatically from your `.env` file.
 
-> Make sure DynamoDB Local is running (Part 3.2) before starting the server.
-
-You should see:
+You should see gunicorn start:
 ```
- * Running on http://127.0.0.1:3000
+[INFO] Listening at: http://0.0.0.0:8080
 ```
 
 ### 4.2 Start ngrok
@@ -258,12 +261,12 @@ You should see:
 Open a **second** PowerShell window:
 
 ```powershell
-ngrok http 3000
+ngrok http 8080
 ```
 
 ngrok will print a public HTTPS URL:
 ```
-Forwarding  https://xxxx-xx-xx-xx-xx.ngrok-free.app -> http://localhost:3000
+Forwarding  https://xxxx-xx-xx-xx-xx.ngrok-free.app -> http://localhost:8080
 ```
 
 Copy the `https://` URL.
@@ -329,41 +332,66 @@ Whenever `CLAUDE.md` is updated, update this `README.md` to reflect the new or c
 
 ## Part 6 — Deploy to AWS (Production)
 
-### 6.1 Install AWS CLI and SAM CLI
+The bot runs on **AWS App Runner** — a fully managed service that handles HTTPS, load balancing, and scaling automatically. No VPC, ALB, ACM certificate, or custom domain required. App Runner provides a free `*.awsapprunner.com` HTTPS URL out of the box.
+
+The stream poller runs as a daemon thread inside the gunicorn process alongside the HTTP server.
+
+### 6.1 Prerequisites
+
+Install the AWS CLI and Docker Desktop if you haven't already:
 
 ```powershell
 winget install Amazon.AWSCLI
-winget install Amazon.SAM-CLI
 ```
 
 Configure AWS credentials:
 ```powershell
-aws login
+aws configure
 ```
 
-### 6.2 Create an S3 bucket for SAM artifacts (one-time)
+### 6.2 Deploy the CloudFormation stack (first time)
+
+Because App Runner requires a real ECR image URI, create the repository and push the image before deploying the stack:
+
+**Step 1 — create the ECR repository (once):**
 
 ```powershell
-aws s3 mb s3://the-bench-boss
+make ecr-create
 ```
 
-### 6.3 Deploy
+**Step 2 — build and push the image:**
 
 ```powershell
-make deploy
+make push
 ```
 
-Follow the prompts. When asked for `DiscordPublicKey`, paste your public key.
+**Step 3 — deploy the stack:**
 
-The deploy output will print your **Interactions URL**:
+```powershell
+make deploy-infra `
+  DISCORD_PUBLIC_KEY=<your-key> `
+  DISCORD_TOKEN=<your-token>
 ```
-InteractionsUrl: https://abc123.execute-api.us-east-1.amazonaws.com/Prod/interactions
+
+`ECR_URI` is read automatically from the stack's `RepositoryUri` output after step 1.
+
+### 6.3 Update Discord
+
+The deploy output prints your **Interactions URL**:
+```
+InteractionsUrl: https://<id>.us-east-1.awsapprunner.com/interactions
 ```
 
-### 6.4 Update Discord
-
-1. Copy the URL from the deploy output
+1. Copy that URL
 2. Go to **Discord Developer Portal → General Information**
 3. Paste it into **Interactions Endpoint URL** and click **Save Changes**
 
 Your bot is now live on AWS.
+
+### 6.4 Subsequent deploys
+
+Because `AutoDeploymentsEnabled` is on, pushing a new image to ECR automatically triggers a redeployment — no CloudFormation update needed:
+
+```powershell
+make push
+```
