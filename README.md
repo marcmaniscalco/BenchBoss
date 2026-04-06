@@ -309,6 +309,13 @@ make cov
 
 Whenever `CLAUDE.md` is updated, update this `README.md` to reflect the new or changed instructions.
 
+### Filltime Role Marking
+
+When a user RSVPs via any button (accepted / declined / tentative) or is added via the **+** button, the bot checks whether they hold the **Filltime** role (Discord role ID `1085056467763208253`).
+
+- **Role present** → name is stored and displayed as-is.
+- **Role absent** → the display name is stored with a `*` suffix (e.g. `Jane*`) so admins can see at a glance who is not a fulltime member.
+
 ---
 
 ## Part 5 — Adding Commands
@@ -332,9 +339,11 @@ Whenever `CLAUDE.md` is updated, update this `README.md` to reflect the new or c
 
 ## Part 6 — Deploy to AWS (Production)
 
-The bot runs on **AWS App Runner** — a fully managed service that handles HTTPS, load balancing, and scaling automatically. No VPC, ALB, ACM certificate, or custom domain required. App Runner provides a free `*.awsapprunner.com` HTTPS URL out of the box.
+The bot runs on **AWS ECS Fargate** behind an Application Load Balancer (ALB). The stream poller runs as a daemon thread inside the gunicorn process alongside the HTTP server.
 
-The stream poller runs as a daemon thread inside the gunicorn process alongside the HTTP server.
+**Prerequisites before deploying:**
+- A custom domain with a DNS provider (e.g. Route 53)
+- An ACM certificate issued for that domain in the same region as your stack
 
 ### 6.1 Prerequisites
 
@@ -349,9 +358,38 @@ Configure AWS credentials:
 aws configure
 ```
 
-### 6.2 Deploy the CloudFormation stack (first time)
+### 6.2 Get an ACM certificate ARN
 
-Because App Runner requires a real ECR image URI, create the repository and push the image before deploying the stack:
+The ALB needs a TLS certificate issued by AWS Certificate Manager (ACM). This is free.
+
+**Step 1 — request the certificate:**
+
+1. Open the [ACM console](https://console.aws.amazon.com/acm) and make sure you are in **us-east-1** (or whichever region you deploy to)
+2. Click **Request a certificate → Request a public certificate → Next**
+3. Under **Fully qualified domain name** enter the subdomain you want to use, e.g. `bot.yourdomain.com`
+4. Leave **DNS validation** selected (recommended) and click **Request**
+
+**Step 2 — validate ownership:**
+
+After requesting, ACM shows a **CNAME name** and **CNAME value** you must add to your domain's DNS.
+
+- **Route 53 (same AWS account):** click **Create records in Route 53** — ACM does it automatically
+- **Other DNS providers (Cloudflare, Namecheap, etc.):** copy the CNAME name/value and add a CNAME record in your DNS provider's dashboard
+
+Validation usually completes within a few minutes. Refresh the ACM console until the status shows **Issued**.
+
+**Step 3 — copy the ARN:**
+
+Once issued, click the certificate and copy the **ARN** at the top. It looks like:
+```
+arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+This is your `CERTIFICATE_ARN` for the deploy command.
+
+---
+
+### 6.3 Deploy the CloudFormation stack (first time)
 
 **Step 1 — create the ECR repository (once):**
 
@@ -367,31 +405,44 @@ make push
 
 **Step 3 — deploy the stack:**
 
+You need four extra values. Find them in the AWS console:
+- `VPC_ID` — the VPC to deploy into (default VPC works fine)
+- `SUBNET_IDS` — at least two **public** subnets in different AZs, comma-separated
+- `CERTIFICATE_ARN` — ARN of an ACM certificate for your domain
+
 ```powershell
 make deploy-infra `
   DISCORD_PUBLIC_KEY=<your-key> `
-  DISCORD_TOKEN=<your-token>
+  DISCORD_TOKEN=<your-token> `
+  VPC_ID=vpc-xxxxxxxx `
+  SUBNET_IDS="subnet-aaa,subnet-bbb" `
+  CERTIFICATE_ARN=arn:aws:acm:us-east-1:123456789012:certificate/xxxx
 ```
 
-`ECR_URI` is read automatically from the stack's `RepositoryUri` output after step 1.
+### 6.4 Point your domain at the ALB
 
-### 6.3 Update Discord
-
-The deploy output prints your **Interactions URL**:
+The deploy output prints the ALB DNS name:
 ```
-InteractionsUrl: https://<id>.us-east-1.awsapprunner.com/interactions
+ALBDnsName: bench-boss-1234567890.us-east-1.elb.amazonaws.com
 ```
 
-1. Copy that URL
-2. Go to **Discord Developer Portal → General Information**
-3. Paste it into **Interactions Endpoint URL** and click **Save Changes**
+Create a **CNAME** (or Route 53 alias) record pointing your domain to that value:
+```
+bot.yourdomain.com  →  bench-boss-1234567890.us-east-1.elb.amazonaws.com
+```
+
+### 6.5 Update Discord
+
+1. Go to **Discord Developer Portal → General Information**
+2. Paste `https://bot.yourdomain.com/interactions` into **Interactions Endpoint URL**
+3. Click **Save Changes**
 
 Your bot is now live on AWS.
 
-### 6.4 Subsequent deploys
+### 6.6 Subsequent deploys
 
-Because `AutoDeploymentsEnabled` is on, pushing a new image to ECR automatically triggers a redeployment — no CloudFormation update needed:
+Push a new image and redeploy the stack to force ECS to pull the latest task definition:
 
 ```powershell
-make push
+make deploy
 ```

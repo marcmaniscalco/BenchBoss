@@ -12,7 +12,7 @@ import requests
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.constants import MESSAGE_FETCH_DELAY
+from bench_boss.constants import FILLTIME_ROLE_ID, MESSAGE_FETCH_DELAY
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
     build_delete_confirm_buttons,
@@ -49,6 +49,10 @@ UPDATE_MESSAGE = 7
 MODAL = 9
 
 _ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative"}
+
+
+def _has_filltime_role(roles: list) -> bool:
+    return FILLTIME_ROLE_ID in roles
 
 _ADMINISTRATOR = 1 << 3
 
@@ -237,6 +241,10 @@ def _handle_rsvp(body: dict) -> dict:
         or user_data.get("username")
         or None
     )
+    if member and display_name is not None and not _has_filltime_role(
+        member.get("roles", [])
+    ):
+        display_name = display_name + "*"
 
     try:
         event = update_rsvp(event_key, user_id, action, display_name)
@@ -379,17 +387,27 @@ def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | Non
     return members[0]["user"]["id"] if members else None
 
 
-def _fetch_member_display_name(guild_id: str, user_id: str, bot_token: str) -> str | None:
-    """Fetch a guild member's display name (server nick > global name > username)."""
+def _fetch_guild_member(guild_id: str, user_id: str, bot_token: str) -> dict | None:
+    """Fetch the raw guild member object from the Discord API."""
     resp = requests.get(
         f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}",
         headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
         timeout=10,
     )
     if not resp.ok:
-        logger.warning("Failed to fetch member %s from guild %s: %s", user_id, guild_id, resp.status_code)
+        logger.warning(
+            "Failed to fetch member %s from guild %s: %s",
+            user_id, guild_id, resp.status_code,
+        )
         return None
-    member = resp.json()
+    return resp.json()
+
+
+def _fetch_member_display_name(guild_id: str, user_id: str, bot_token: str) -> str | None:
+    """Fetch a guild member's display name (server nick > global name > username)."""
+    member = _fetch_guild_member(guild_id, user_id, bot_token)
+    if member is None:
+        return None
     return (
         member.get("nick")
         or member.get("user", {}).get("global_name")
@@ -420,7 +438,19 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
             return _ephemeral("Could not find that user — try again with their @mention or numeric ID.")
 
     guild_id = body.get("guild_id")
-    display_name = _fetch_member_display_name(guild_id, user_id, bot_token) if guild_id and bot_token else None
+    guild_member = (
+        _fetch_guild_member(guild_id, user_id, bot_token) if guild_id and bot_token else None
+    )
+    display_name = (
+        guild_member.get("nick")
+        or guild_member.get("user", {}).get("global_name")
+        or guild_member.get("user", {}).get("username")
+        or None
+    ) if guild_member else None
+    if guild_member is not None and display_name is not None and not _has_filltime_role(
+        guild_member.get("roles", [])
+    ):
+        display_name = display_name + "*"
 
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()

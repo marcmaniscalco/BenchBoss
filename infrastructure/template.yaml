@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: BenchBoss — Discord Bot on AWS App Runner
+Description: BenchBoss — Discord Bot on ECS Fargate
 
 Parameters:
   DiscordPublicKey:
@@ -13,6 +13,15 @@ Parameters:
   ImageUri:
     Type: String
     Description: "ECR image URI including tag (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/bench-boss:latest)"
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "VPC to deploy into (use the default VPC if unsure)"
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: "At least two public subnets in different AZs (required by the ALB)"
+  CertificateArn:
+    Type: String
+    Description: "ARN of an ACM certificate for your domain (must be in us-east-1 for CloudFront, or the same region as the ALB)"
 
 Resources:
 
@@ -36,32 +45,32 @@ Resources:
 
   # ── IAM ─────────────────────────────────────────────────────────────────────
 
-  # Allows App Runner to pull the image from ECR
-  ECRAccessRole:
+  # Allows ECS to pull the image from ECR and ship logs to CloudWatch
+  TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: bench-boss-ecr-access-role
+      RoleName: bench-boss-task-execution-role
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: build.apprunner.amazonaws.com
+              Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
 
   # Grants the running container access to DynamoDB
-  InstanceRole:
+  TaskRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: bench-boss-instance-role
+      RoleName: bench-boss-task-role
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
-              Service: tasks.apprunner.amazonaws.com
+              Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
       Policies:
         - PolicyName: bench-boss-dynamodb
@@ -86,40 +95,133 @@ Resources:
                   - dynamodbstreams:ListStreams
                 Resource: !GetAtt BenchBossTable.StreamArn
 
-  # ── App Runner ───────────────────────────────────────────────────────────────
+  # ── Logging ─────────────────────────────────────────────────────────────────
 
-  BenchBossService:
-    Type: AWS::AppRunner::Service
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/bench-boss
+      RetentionInDays: 7
+
+  # ── Security Groups ──────────────────────────────────────────────────────────
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTPS inbound from the internet
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic from the ALB to Fargate tasks
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  # ── Load Balancer ────────────────────────────────────────────────────────────
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: bench-boss
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: bench-boss
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 8080
+      TargetType: ip
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Protocol: HTTPS
+      Port: 443
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ── ECS ─────────────────────────────────────────────────────────────────────
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: bench-boss
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: bench-boss
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: bench-boss
+          Image: !Ref ImageUri
+          PortMappings:
+            - ContainerPort: 8080
+          Environment:
+            - Name: DISCORD_PUBLIC_KEY
+              Value: !Ref DiscordPublicKey
+            - Name: DISCORD_TOKEN
+              Value: !Ref DiscordToken
+            - Name: DYNAMODB_TABLE
+              Value: !Ref BenchBossTable
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: bench-boss
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener
     Properties:
       ServiceName: bench-boss
-      SourceConfiguration:
-        AuthenticationConfiguration:
-          AccessRoleArn: !GetAtt ECRAccessRole.Arn
-        AutoDeploymentsEnabled: true
-        ImageRepository:
-          ImageIdentifier: !Ref ImageUri
-          ImageRepositoryType: ECR
-          ImageConfiguration:
-            Port: "8080"
-            RuntimeEnvironmentVariables:
-              - Name: DISCORD_PUBLIC_KEY
-                Value: !Ref DiscordPublicKey
-              - Name: DISCORD_TOKEN
-                Value: !Ref DiscordToken
-              - Name: DYNAMODB_TABLE
-                Value: !Ref BenchBossTable
-      InstanceConfiguration:
-        Cpu: "256"
-        Memory: "512"
-        InstanceRoleArn: !GetAtt InstanceRole.Arn
-      HealthCheckConfiguration:
-        Protocol: HTTP
-        Path: /health
-        Interval: 10
-        HealthyThreshold: 1
-        UnhealthyThreshold: 5
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref TaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Ref SubnetIds
+          SecurityGroups:
+            - !Ref TaskSecurityGroup
+      LoadBalancers:
+        - ContainerName: bench-boss
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
 
 Outputs:
-  InteractionsUrl:
-    Description: "Paste into Discord Developer Portal > General Information > Interactions Endpoint URL"
-    Value: !Sub "https://${BenchBossService.ServiceUrl}/interactions"
+  ALBDnsName:
+    Description: "Create a DNS CNAME/alias for your domain pointing here, then use https://{your-domain}/interactions in Discord"
+    Value: !GetAtt ALB.DNSName

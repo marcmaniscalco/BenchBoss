@@ -21,6 +21,7 @@ from bench_boss.bot import (
     _delete_channel_message,
     _delete_original_message,
     _fetch_and_store_message_ref,
+    _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
     _send_dm_events,
@@ -415,6 +416,7 @@ class TestRsvpInteraction:
                     "type": MESSAGE_COMPONENT,
                     "member": {
                         "nick": "Server Nick",
+                        "roles": ["1085056467763208253"],
                         "user": {"id": "user1", "global_name": "Alice"},
                     },
                     "data": {"custom_id": "rsvp:accepted:key1"},
@@ -428,7 +430,7 @@ class TestRsvpInteraction:
             handle_interaction(
                 {
                     "type": MESSAGE_COMPONENT,
-                    "member": {"user": {"id": "user1", "global_name": "Alice"}},
+                    "member": {"roles": ["1085056467763208253"], "user": {"id": "user1", "global_name": "Alice"}},
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
@@ -440,11 +442,56 @@ class TestRsvpInteraction:
             handle_interaction(
                 {
                     "type": MESSAGE_COMPONENT,
-                    "member": {"user": {"id": "user1", "username": "alice123"}},
+                    "member": {"roles": ["1085056467763208253"], "user": {"id": "user1", "username": "alice123"}},
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
         mock_update.assert_called_once_with("key1", "user1", "accepted", "alice123")
+
+    def test_name_suffixed_with_star_when_no_filltime_role(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {
+                        "nick": "Jane",
+                        "roles": [],
+                        "user": {"id": "user2", "global_name": "Jane"},
+                    },
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user2", "accepted", "Jane*")
+
+    def test_name_not_suffixed_when_filltime_role_present(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {
+                        "nick": "Jane",
+                        "roles": ["1085056467763208253", "other-role"],
+                        "user": {"id": "user2", "global_name": "Jane"},
+                    },
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user2", "accepted", "Jane")
+
+    def test_no_star_when_display_name_is_none(self):
+        """Users with no resolvable name should not get a bare '*' stored."""
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"roles": [], "user": {"id": "user3"}},
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user3", "accepted", None)
 
     def test_embed_shows_display_name_when_member_names_present(self):
         updated = make_stored_event(accepted=["user1"], member_names={"user1": "Alice"})
@@ -1065,7 +1112,11 @@ class TestRsvpEditModalSubmit:
         event = make_stored_event()
         member_resp = MagicMock()
         member_resp.ok = True
-        member_resp.json.return_value = {"nick": "Server Nick", "user": {"global_name": "Alice", "username": "alice"}}
+        member_resp.json.return_value = {
+            "nick": "Server Nick",
+            "roles": ["1085056467763208253"],
+            "user": {"global_name": "Alice", "username": "alice"},
+        }
         with (
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
@@ -1079,7 +1130,11 @@ class TestRsvpEditModalSubmit:
     def test_global_name_used_when_no_server_nick_in_modal(self):
         member_resp = MagicMock()
         member_resp.ok = True
-        member_resp.json.return_value = {"nick": None, "user": {"global_name": "Alice", "username": "alice"}}
+        member_resp.json.return_value = {
+            "nick": None,
+            "roles": ["1085056467763208253"],
+            "user": {"global_name": "Alice", "username": "alice"},
+        }
         with (
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
@@ -1093,7 +1148,7 @@ class TestRsvpEditModalSubmit:
     def test_confirmation_uses_display_name_not_at_symbol(self):
         member_resp = MagicMock()
         member_resp.ok = True
-        member_resp.json.return_value = {"nick": "Server Nick", "user": {}}
+        member_resp.json.return_value = {"nick": "Server Nick", "roles": ["1085056467763208253"], "user": {}}
         with (
             patch("bench_boss.bot.set_rsvp"),
             patch("bench_boss.bot._update_channel_message"),
@@ -1105,6 +1160,38 @@ class TestRsvpEditModalSubmit:
         content = result["body"]["data"]["content"]
         assert "Server Nick" in content
         assert "@" not in content
+
+    def test_modal_name_suffixed_with_star_when_no_filltime_role(self):
+        member_resp = MagicMock()
+        member_resp.ok = True
+        member_resp.json.return_value = {"nick": "Jane", "roles": [], "user": {"global_name": "Jane"}}
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+            patch("bench_boss.bot.requests.get", return_value=member_resp),
+        ):
+            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body["guild_id"] = "guild1"
+            handle_interaction(body, bot_token="tok")
+        mock_set.assert_called_once_with("key1", "123456789", "accepted", "Jane*")
+
+    def test_modal_name_not_suffixed_when_filltime_role_present(self):
+        member_resp = MagicMock()
+        member_resp.ok = True
+        member_resp.json.return_value = {
+            "nick": "Jane",
+            "roles": ["1085056467763208253"],
+            "user": {"global_name": "Jane"},
+        }
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+            patch("bench_boss.bot.requests.get", return_value=member_resp),
+        ):
+            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body["guild_id"] = "guild1"
+            handle_interaction(body, bot_token="tok")
+        mock_set.assert_called_once_with("key1", "123456789", "accepted", "Jane")
 
     def test_unhandled_modal_submit_returns_400(self):
         body = {"type": MODAL_SUBMIT, "data": {"custom_id": "unknown_modal:key1", "components": []}}
@@ -1155,6 +1242,41 @@ class TestFetchMemberDisplayName:
     def test_calls_correct_guild_member_url(self):
         with patch("bench_boss.bot.requests.get", return_value=self._ok_resp({"user": {}})) as mock_get:
             _fetch_member_display_name("guild1", "user1", "tok")
+        url = mock_get.call_args[0][0]
+        assert "guilds/guild1/members/user1" in url
+
+
+# ---------------------------------------------------------------------------
+# _fetch_guild_member
+# ---------------------------------------------------------------------------
+
+
+class TestFetchGuildMember:
+    def _ok_resp(self, data):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = data
+        return resp
+
+    def _fail_resp(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 404
+        return resp
+
+    def test_returns_member_dict_on_success(self):
+        member_data = {"nick": "Nick", "roles": ["1085056467763208253"], "user": {"id": "u1"}}
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp(member_data)):
+            result = _fetch_guild_member("g1", "u1", "tok")
+        assert result == member_data
+
+    def test_returns_none_on_api_failure(self):
+        with patch("bench_boss.bot.requests.get", return_value=self._fail_resp()):
+            assert _fetch_guild_member("g1", "u1", "tok") is None
+
+    def test_calls_correct_url(self):
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp({"user": {}})) as mock_get:
+            _fetch_guild_member("guild1", "user1", "tok")
         url = mock_get.call_args[0][0]
         assert "guilds/guild1/members/user1" in url
 

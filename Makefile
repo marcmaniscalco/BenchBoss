@@ -69,10 +69,10 @@ push: build
 # Create the ECR repository before the first full deploy (idempotent)
 ecr-create:
 	-aws ecr create-repository --repository-name bench-boss --region $(AWS_REGION)
-	-aws iam create-service-linked-role --aws-service-name apprunner.amazonaws.com
 
 # Deploy or update the CloudFormation stack.
-# Required env vars: DISCORD_PUBLIC_KEY, DISCORD_TOKEN
+# Required env vars: DISCORD_PUBLIC_KEY, DISCORD_TOKEN, VPC_ID, SUBNET_IDS, CERTIFICATE_ARN
+# Example: make deploy-infra VPC_ID=vpc-abc SUBNET_IDS="subnet-1,subnet-2" CERTIFICATE_ARN=arn:aws:acm:...
 deploy-infra:
 	aws cloudformation deploy \
 		--template-file infrastructure/template.yaml \
@@ -81,7 +81,10 @@ deploy-infra:
 		--parameter-overrides \
 			DiscordPublicKey=$(DISCORD_PUBLIC_KEY) \
 			DiscordToken=$(DISCORD_TOKEN) \
-			ImageUri=$(ECR_URI):$(IMAGE_TAG)
+			ImageUri=$(ECR_URI):$(IMAGE_TAG) \
+			VpcId=$(VPC_ID) \
+			SubnetIds=$(SUBNET_IDS) \
+			CertificateArn=$(CERTIFICATE_ARN)
 
 # Build image, push to ECR, then update the stack (which forces a new task deployment)
 deploy: push deploy-infra
