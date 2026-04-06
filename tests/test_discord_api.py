@@ -125,6 +125,39 @@ class TestBuildEventEmbed:
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
         assert accepted_field["value"] == "-"
 
+    def test_goalie_field_shows_dash_when_empty(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
+        goalie_field = next(f for f in embed["fields"] if "Goalie" in f["name"])
+        assert goalie_field["value"] == "-"
+
+    def test_goalie_field_shows_mention_when_set(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], goalie=["user1"])
+        goalie_field = next(f for f in embed["fields"] if "Goalie" in f["name"])
+        assert "<@user1>" in goalie_field["value"]
+
+    def test_goalie_field_shows_display_name_when_in_names(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, [], [], [],
+            names={"user1": "Alice"}, goalie=["user1"],
+        )
+        goalie_field = next(f for f in embed["fields"] if "Goalie" in f["name"])
+        assert "Alice" in goalie_field["value"]
+        assert "<@user1>" not in goalie_field["value"]
+
+    def test_goalie_field_appears_before_rsvp_fields(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [], goalie=["user1"])
+        field_names = [f["name"] for f in embed["fields"]]
+        goalie_idx = next(i for i, n in enumerate(field_names) if "Goalie" in n)
+        accepted_idx = next(i for i, n in enumerate(field_names) if "Accepted" in n)
+        assert goalie_idx < accepted_idx
+
+    def test_goalie_field_appears_after_calendar_field(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        cal_idx = next(i for i, n in enumerate(field_names) if "Calendar" in n)
+        goalie_idx = next(i for i, n in enumerate(field_names) if "Goalie" in n)
+        assert goalie_idx == cal_idx + 1
+
     def test_naive_datetime_is_handled_without_error(self):
         naive_start = datetime(2026, 4, 5, 19, 0)
         embed = build_event_embed(
@@ -215,9 +248,9 @@ class TestBuildRsvpComponents:
         components = build_rsvp_components("key1")
         assert len(components[0]["components"]) == 4
 
-    def test_row2_has_two_buttons(self):
+    def test_row2_has_three_buttons(self):
         components = build_rsvp_components("key1")
-        assert len(components[1]["components"]) == 2
+        assert len(components[1]["components"]) == 3
 
     def test_row1_custom_ids(self):
         components = build_rsvp_components("key1")
@@ -232,7 +265,7 @@ class TestBuildRsvpComponents:
     def test_row2_custom_ids(self):
         components = build_rsvp_components("key1")
         custom_ids = {btn["custom_id"] for btn in components[1]["components"]}
-        assert custom_ids == {"add_rsvp:key1", "remove_rsvp:key1"}
+        assert custom_ids == {"add_rsvp:key1", "remove_rsvp:key1", "goalie_rsvp:key1"}
 
     def test_no_edit_button(self):
         components = build_rsvp_components("key1")
@@ -301,6 +334,17 @@ class TestBuildRsvpComponents:
         btn = next(b for b in components[1]["components"] if b["custom_id"] == "remove_rsvp:key1")
         assert btn["emoji"]["name"] == "➖"
         assert "label" not in btn
+
+    def test_goalie_button_has_mask_emoji(self):
+        components = build_rsvp_components("key1")
+        btn = next(b for b in components[1]["components"] if b["custom_id"] == "goalie_rsvp:key1")
+        assert btn["emoji"]["name"] == "🎭"
+        assert "label" not in btn
+
+    def test_goalie_button_has_secondary_style(self):
+        components = build_rsvp_components("key1")
+        btn = next(b for b in components[1]["components"] if b["custom_id"] == "goalie_rsvp:key1")
+        assert btn["style"] == 2
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init server register build push ecr-create deploy-infra deploy
+.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init server register build push ecr-create deploy-infra deploy release
 
 -include .env
 export
@@ -91,3 +91,7 @@ deploy-infra:
 
 # Build image, push to ECR, then update the stack (which forces a new task deployment)
 deploy: push deploy-infra
+
+# Build and deploy using the current git commit SHA as the image tag
+release:
+	$(MAKE) deploy IMAGE_TAG=$(shell git rev-parse --short HEAD)

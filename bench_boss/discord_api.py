@@ -94,6 +94,7 @@ def build_event_embed(
     declined: list[str],
     tentative: list[str],
     names: dict[str, str] | None = None,
+    goalie: list[str] | None = None,
 ) -> dict:
     """Build a Discord embed dict in Apollo style."""
     fields: list[dict] = [
@@ -114,6 +115,10 @@ def build_event_embed(
     fields.append(
         {"name": "🗓️ Add to Calendar", "value": f"[Google Calendar]({gcal_url})", "inline": False}
     )
+
+    goalie_list = goalie or []
+    goalie_name = (names.get(goalie_list[0]) if names and goalie_list else None) or (f"<@{goalie_list[0]}>" if goalie_list else "-")
+    fields.append({"name": "🎭 Goalie", "value": goalie_name, "inline": False})
 
     # Blank separator before RSVP section
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
@@ -160,6 +165,12 @@ def build_rsvp_components(event_key: str) -> list[dict]:
             "style": 4,  # DANGER (red)
             "emoji": {"name": "➖"},
             "custom_id": f"remove_rsvp:{event_key}",
+        },
+        {
+            "type": 2,
+            "style": 2,  # SECONDARY (gray)
+            "emoji": {"name": "🎭"},
+            "custom_id": f"goalie_rsvp:{event_key}",
         },
     ]
     return [

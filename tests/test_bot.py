@@ -227,7 +227,7 @@ class TestScheduleInteraction:
         components = result["body"]["data"]["components"]
         assert len(components) == 2
         assert len(components[0]["components"]) == 4
-        assert len(components[1]["components"]) == 2
+        assert len(components[1]["components"]) == 3
 
     def test_only_next_event_is_used(self):
         events = [

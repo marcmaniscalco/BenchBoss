@@ -9,6 +9,7 @@ from bench_boss.dynamo import (
     get_event,
     remove_rsvp,
     save_event,
+    set_goalie,
     set_rsvp,
     store_interaction_ref,
     store_message_ref,
@@ -53,6 +54,7 @@ class TestSaveEvent:
         assert item["accepted"] == []
         assert item["declined"] == []
         assert item["tentative"] == []
+        assert item["goalie"] == []
 
     def test_omits_none_optional_fields(self, mock_table):
         save_event("key1", "My Event", START, None, None, None)
@@ -375,3 +377,56 @@ class TestUpdateRsvp:
         mock_table.get_item.return_value = {"Item": _make_event()}
         result = update_rsvp("key1", "user1", "accepted", display_name=None)
         assert "user1" not in result.get("member_names", {})
+
+
+# ---------------------------------------------------------------------------
+# set_goalie
+# ---------------------------------------------------------------------------
+
+
+class TestSetGoalie:
+    def test_sets_user_as_goalie(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = set_goalie("key1", "user1")
+        assert result["goalie"] == ["user1"]
+
+    def test_replaces_existing_goalie(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(goalie=["user1"])}
+        result = set_goalie("key1", "user2")
+        assert result["goalie"] == ["user2"]
+        assert "user1" not in result["goalie"]
+
+    def test_toggles_off_when_user_is_already_goalie(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(goalie=["user1"])}
+        result = set_goalie("key1", "user1")
+        assert result["goalie"] == []
+
+    def test_stores_display_name_when_provided(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = set_goalie("key1", "user1", display_name="Alice")
+        assert result["member_names"]["user1"] == "Alice"
+
+    def test_removes_display_name_on_toggle_off(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(
+            goalie=["user1"], member_names={"user1": "Alice"}
+        )}
+        result = set_goalie("key1", "user1")
+        assert "user1" not in result["member_names"]
+
+    def test_removes_old_goalie_display_name_on_replace(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(
+            goalie=["user1"], member_names={"user1": "Alice"}
+        )}
+        result = set_goalie("key1", "user2", display_name="Bob")
+        assert "user1" not in result["member_names"]
+        assert result["member_names"]["user2"] == "Bob"
+
+    def test_raises_when_event_not_found(self, mock_table):
+        mock_table.get_item.return_value = {}
+        with pytest.raises(ValueError):
+            set_goalie("missing", "user1")
+
+    def test_saves_updated_event_to_dynamo(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        set_goalie("key1", "user1")
+        mock_table.put_item.assert_called_once()

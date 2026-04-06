@@ -27,6 +27,7 @@ from bench_boss.dynamo import (
     get_event,
     remove_rsvp,
     save_event,
+    set_goalie,
     set_rsvp,
     store_interaction_ref,
     store_message_ref,
@@ -136,6 +137,8 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             return _handle_add_rsvp_button(body)
         if custom_id.startswith("remove_rsvp:"):
             return _handle_remove_rsvp_button(body)
+        if custom_id.startswith("goalie_rsvp:"):
+            return _handle_goalie_rsvp(body)
         return _handle_rsvp(body)
 
     if interaction_type == MODAL_SUBMIT:
@@ -213,6 +216,7 @@ def _handle_schedule(
         accepted=[],
         declined=[],
         tentative=[],
+        goalie=[],
     )
     components = build_rsvp_components(event_key)
 
@@ -269,6 +273,7 @@ def _handle_rsvp(body: dict) -> dict:
         declined=event.get("declined", []),
         tentative=event.get("tentative", []),
         names=event.get("member_names") or {},
+        goalie=event.get("goalie", []),
     )
     components = build_rsvp_components(event_key)
 
@@ -362,6 +367,58 @@ def _handle_remove_rsvp_button(body: dict) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
     return {"statusCode": 200, "body": {"type": MODAL, "data": build_remove_rsvp_modal(event_key)}}
+
+
+def _handle_goalie_rsvp(body: dict) -> dict:
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    member = body.get("member") or {}
+    user_data = member.get("user") or body.get("user") or {}
+    user_id = user_data.get("id", "")
+    display_name = (
+        member.get("nick")
+        or user_data.get("global_name")
+        or user_data.get("username")
+        or None
+    )
+    if member and display_name is not None and not _has_filltime_role(
+        member.get("roles", [])
+    ):
+        display_name = display_name + "*"
+
+    try:
+        event = set_goalie(event_key, user_id, display_name)
+        logger.info("Goalie RSVP for event %s by user %s", event_key, user_id)
+    except ValueError:
+        logger.warning("Goalie RSVP failed — event not found: %s", event_key)
+        return _message("Event not found.")
+    except Exception as e:
+        logger.error("Failed to update goalie for event %s: %s", event_key, e)
+        return _message(f"Failed to update goalie: {e}")
+
+    start = datetime.fromisoformat(event["start"])
+    end = datetime.fromisoformat(event["end"]) if event.get("end") else None
+
+    embed = build_event_embed(
+        name=event["name"],
+        start=start,
+        end=end,
+        location=event.get("location"),
+        description=event.get("description"),
+        accepted=event.get("accepted", []),
+        declined=event.get("declined", []),
+        tentative=event.get("tentative", []),
+        names=event.get("member_names") or {},
+        goalie=event.get("goalie", []),
+    )
+    components = build_rsvp_components(event_key)
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": UPDATE_MESSAGE,
+            "data": {"embeds": [embed], "components": components},
+        },
+    }
 
 
 def _parse_user_id(value: str) -> str | None:
@@ -501,6 +558,7 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         declined=event.get("declined", []),
         tentative=event.get("tentative", []),
         names=event.get("member_names") or {},
+        goalie=event.get("goalie", []),
     )
     event_key = event["event_key"]
     components = build_rsvp_components(event_key)

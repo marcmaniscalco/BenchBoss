@@ -13,6 +13,7 @@ from bench_boss.constants import EVENT_TTL_HOURS
 logger = logging.getLogger(__name__)
 
 RSVP_ACTIONS = ("accepted", "declined", "tentative")
+GOALIE_ACTION = "goalie"
 
 
 def _table():
@@ -58,6 +59,7 @@ def save_event(
         "accepted": [],
         "declined": [],
         "tentative": [],
+        "goalie": [],
         "ttl": _ttl_timestamp(end, start),
     }
     if end is not None:
@@ -158,6 +160,39 @@ def remove_rsvp(event_key: str, user_id: str) -> dict:
     _clear_user_from_rsvps(event, user_id)
     names = dict(event.get("member_names") or {})
     names.pop(user_id, None)
+    event["member_names"] = names
+    _table().put_item(Item=event)
+    return event
+
+
+def set_goalie(event_key: str, user_id: str, display_name: str | None = None) -> dict:
+    """
+    Set a user as the goalie for an event (max 1).
+
+    If the user is already the goalie, toggles them off.
+    Otherwise replaces whoever was goalie with this user.
+    Returns the updated event item.
+    """
+    event = get_event(event_key)
+    if event is None:
+        logger.warning("Event not found: %s", event_key)
+        raise ValueError(f"Event {event_key!r} not found")
+
+    current_goalie = list(event.get("goalie", []))
+    names = dict(event.get("member_names") or {})
+
+    if user_id in current_goalie:
+        # Toggle off
+        event["goalie"] = []
+        names.pop(user_id, None)
+    else:
+        # Remove old goalie's name, then set new goalie
+        for old_id in current_goalie:
+            names.pop(old_id, None)
+        event["goalie"] = [user_id]
+        if display_name:
+            names[user_id] = display_name
+
     event["member_names"] = names
     _table().put_item(Item=event)
     return event
