@@ -116,12 +116,12 @@ def build_event_embed(
         {"name": "🗓️ Add to Calendar", "value": f"[Google Calendar]({gcal_url})", "inline": False}
     )
 
+    # Blank separator before RSVP section
+    fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
+
     goalie_list = goalie or []
     goalie_name = (names.get(goalie_list[0]) if names and goalie_list else None) or (f"<@{goalie_list[0]}>" if goalie_list else "-")
     fields.append({"name": "🇬 Goalie", "value": goalie_name, "inline": False})
-
-    # Blank separator before RSVP section
-    fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
 
     fields.extend(
         [

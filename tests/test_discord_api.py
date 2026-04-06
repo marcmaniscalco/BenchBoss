@@ -151,12 +151,12 @@ class TestBuildEventEmbed:
         accepted_idx = next(i for i, n in enumerate(field_names) if "Accepted" in n)
         assert goalie_idx < accepted_idx
 
-    def test_goalie_field_appears_after_calendar_field(self):
+    def test_goalie_field_appears_directly_before_accepted_field(self):
         embed = build_event_embed("Event", START, None, None, None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
-        cal_idx = next(i for i, n in enumerate(field_names) if "Calendar" in n)
         goalie_idx = next(i for i, n in enumerate(field_names) if "Goalie" in n)
-        assert goalie_idx == cal_idx + 1
+        accepted_idx = next(i for i, n in enumerate(field_names) if "Accepted" in n)
+        assert goalie_idx == accepted_idx - 1
 
     def test_naive_datetime_is_handled_without_error(self):
         naive_start = datetime(2026, 4, 5, 19, 0)
