@@ -1,5 +1,8 @@
 .PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init server register build push ecr-create deploy-infra deploy
 
+-include .env
+export
+
 AWS_REGION ?= us-east-1
 IMAGE_TAG   ?= latest
 
