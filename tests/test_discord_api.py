@@ -259,13 +259,13 @@ class TestBuildRsvpComponents:
             "rsvp:accepted:key1",
             "rsvp:declined:key1",
             "rsvp:tentative:key1",
-            "delete:key1",
+            "goalie_rsvp:key1",
         }
 
     def test_row2_custom_ids(self):
         components = build_rsvp_components("key1")
         custom_ids = {btn["custom_id"] for btn in components[1]["components"]}
-        assert custom_ids == {"add_rsvp:key1", "remove_rsvp:key1", "goalie_rsvp:key1"}
+        assert custom_ids == {"add_rsvp:key1", "remove_rsvp:key1", "delete:key1"}
 
     def test_no_edit_button(self):
         components = build_rsvp_components("key1")
@@ -279,14 +279,14 @@ class TestBuildRsvpComponents:
     def test_delete_button_has_danger_style(self):
         components = build_rsvp_components("key1")
         delete_btn = next(
-            b for b in components[0]["components"] if b["custom_id"] == "delete:key1"
+            b for b in components[1]["components"] if b["custom_id"] == "delete:key1"
         )
         assert delete_btn["style"] == 4
 
     def test_delete_button_label_is_delete(self):
         components = build_rsvp_components("key1")
         delete_btn = next(
-            b for b in components[0]["components"] if b["custom_id"] == "delete:key1"
+            b for b in components[1]["components"] if b["custom_id"] == "delete:key1"
         )
         assert delete_btn["label"] == "Delete"
 
@@ -337,13 +337,13 @@ class TestBuildRsvpComponents:
 
     def test_goalie_button_has_mask_emoji(self):
         components = build_rsvp_components("key1")
-        btn = next(b for b in components[1]["components"] if b["custom_id"] == "goalie_rsvp:key1")
-        assert btn["emoji"]["name"] == "🎭"
+        btn = next(b for b in components[0]["components"] if b["custom_id"] == "goalie_rsvp:key1")
+        assert btn["emoji"]["name"] == "🇬"
         assert "label" not in btn
 
     def test_goalie_button_has_secondary_style(self):
         components = build_rsvp_components("key1")
-        btn = next(b for b in components[1]["components"] if b["custom_id"] == "goalie_rsvp:key1")
+        btn = next(b for b in components[0]["components"] if b["custom_id"] == "goalie_rsvp:key1")
         assert btn["style"] == 2
 
 

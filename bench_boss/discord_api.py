@@ -118,7 +118,7 @@ def build_event_embed(
 
     goalie_list = goalie or []
     goalie_name = (names.get(goalie_list[0]) if names and goalie_list else None) or (f"<@{goalie_list[0]}>" if goalie_list else "-")
-    fields.append({"name": "🎭 Goalie", "value": goalie_name, "inline": False})
+    fields.append({"name": "🇬 Goalie", "value": goalie_name, "inline": False})
 
     # Blank separator before RSVP section
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
@@ -148,9 +148,9 @@ def build_rsvp_components(event_key: str) -> list[dict]:
     rsvp_buttons.append(
         {
             "type": 2,
-            "style": 4,  # DANGER (red)
-            "label": "Delete",
-            "custom_id": f"delete:{event_key}",
+            "style": 2,  # SECONDARY (gray)
+            "emoji": {"name": "🇬"},
+            "custom_id": f"goalie_rsvp:{event_key}",
         }
     )
     edit_buttons = [
@@ -168,9 +168,9 @@ def build_rsvp_components(event_key: str) -> list[dict]:
         },
         {
             "type": 2,
-            "style": 2,  # SECONDARY (gray)
-            "emoji": {"name": "🎭"},
-            "custom_id": f"goalie_rsvp:{event_key}",
+            "style": 4,  # DANGER (red)
+            "label": "Delete",
+            "custom_id": f"delete:{event_key}",
         },
     ]
     return [
