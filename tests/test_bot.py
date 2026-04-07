@@ -448,7 +448,7 @@ class TestRsvpInteraction:
             )
         mock_update.assert_called_once_with("key1", "user1", "accepted", "alice123")
 
-    def test_name_suffixed_with_star_when_no_filltime_role(self):
+    def test_name_suffixed_with_star_when_no_fulltime_role(self):
         updated = make_stored_event()
         with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
             handle_interaction(
@@ -464,7 +464,7 @@ class TestRsvpInteraction:
             )
         mock_update.assert_called_once_with("key1", "user2", "accepted", "Jane*")
 
-    def test_name_not_suffixed_when_filltime_role_present(self):
+    def test_name_not_suffixed_when_fulltime_role_present(self):
         updated = make_stored_event()
         with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
             handle_interaction(
@@ -1262,7 +1262,7 @@ class TestRsvpEditModalSubmit:
         assert "Server Nick" in content
         assert "@" not in content
 
-    def test_modal_name_suffixed_with_star_when_no_filltime_role(self):
+    def test_modal_name_suffixed_with_star_when_no_fulltime_role(self):
         member_resp = MagicMock()
         member_resp.ok = True
         member_resp.json.return_value = {"nick": "Jane", "roles": [], "user": {"global_name": "Jane"}}
@@ -1276,7 +1276,7 @@ class TestRsvpEditModalSubmit:
             handle_interaction(body, bot_token="tok")
         mock_set.assert_called_once_with("key1", "123456789", "accepted", "Jane*")
 
-    def test_modal_name_not_suffixed_when_filltime_role_present(self):
+    def test_modal_name_not_suffixed_when_fulltime_role_present(self):
         member_resp = MagicMock()
         member_resp.ok = True
         member_resp.json.return_value = {

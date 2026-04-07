@@ -12,7 +12,7 @@ import requests
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.constants import FILLTIME_ROLE_ID, MESSAGE_FETCH_DELAY
+from bench_boss.constants import FULLTIME_ROLE_ID, MESSAGE_FETCH_DELAY
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
     build_delete_confirm_buttons,
@@ -52,8 +52,8 @@ MODAL = 9
 _ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative", "g": "goalie"}
 
 
-def _has_filltime_role(roles: list) -> bool:
-    return FILLTIME_ROLE_ID in roles
+def _has_fulltime_role(roles: list) -> bool:
+    return FULLTIME_ROLE_ID in roles
 
 _ADMINISTRATOR = 1 << 3
 
@@ -245,7 +245,7 @@ def _handle_rsvp(body: dict) -> dict:
         or user_data.get("username")
         or None
     )
-    if member and display_name is not None and not _has_filltime_role(
+    if member and display_name is not None and not _has_fulltime_role(
         member.get("roles", [])
     ):
         display_name = display_name + "*"
@@ -380,7 +380,7 @@ def _handle_goalie_rsvp(body: dict) -> dict:
         or user_data.get("username")
         or None
     )
-    if member and display_name is not None and not _has_filltime_role(
+    if member and display_name is not None and not _has_fulltime_role(
         member.get("roles", [])
     ):
         display_name = display_name + "*"
@@ -513,7 +513,7 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         or guild_member.get("user", {}).get("username")
         or None
     ) if guild_member else None
-    if guild_member is not None and display_name is not None and not _has_filltime_role(
+    if guild_member is not None and display_name is not None and not _has_fulltime_role(
         guild_member.get("roles", [])
     ):
         display_name = display_name + "*"
