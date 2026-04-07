@@ -138,6 +138,9 @@ def set_rsvp(event_key: str, user_id: str, action: str, display_name: str | None
         raise ValueError(f"Event {event_key!r} not found")
 
     _clear_user_from_rsvps(event, user_id)
+    # Remove from goalie — a user can't be in both
+    if user_id in event.get(GOALIE_ACTION, []):
+        event[GOALIE_ACTION] = []
     event[action] = event.get(action, []) + [user_id]
     names = dict(event.get("member_names") or {})
     if display_name:
@@ -194,6 +197,8 @@ def set_goalie(event_key: str, user_id: str, display_name: str | None = None) ->
         for old_id in current_goalie:
             names.pop(old_id, None)
         event["goalie"] = [user_id]
+        # Remove from RSVP lists — a user can't be in both
+        _clear_user_from_rsvps(event, user_id)
         if display_name:
             names[user_id] = display_name
 
@@ -219,6 +224,9 @@ def update_rsvp(event_key: str, user_id: str, action: str, display_name: str | N
     _clear_user_from_rsvps(event, user_id)
     names = dict(event.get("member_names") or {})
     if not already_in_action:
+        # Remove from goalie — a user can't be in both
+        if user_id in event.get(GOALIE_ACTION, []):
+            event[GOALIE_ACTION] = []
         event[action] = event.get(action, []) + [user_id]
         if display_name:
             names[user_id] = display_name

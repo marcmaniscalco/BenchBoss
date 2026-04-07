@@ -273,6 +273,12 @@ class TestSetRsvp:
         result = set_rsvp("key1", "user1", "accepted", display_name=None)
         assert "user1" not in result.get("member_names", {})
 
+    def test_removes_user_from_goalie_when_set_rsvp(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(goalie=["user1"])}
+        result = set_rsvp("key1", "user1", "accepted")
+        assert result["goalie"] == []
+        assert "user1" in result["accepted"]
+
 
 # ---------------------------------------------------------------------------
 # remove_rsvp
@@ -388,6 +394,12 @@ class TestUpdateRsvp:
         result = update_rsvp("key1", "user1", "accepted", display_name=None)
         assert "user1" not in result.get("member_names", {})
 
+    def test_removes_user_from_goalie_when_update_rsvp(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(goalie=["user1"])}
+        result = update_rsvp("key1", "user1", "accepted")
+        assert result["goalie"] == []
+        assert "user1" in result["accepted"]
+
 
 # ---------------------------------------------------------------------------
 # set_goalie
@@ -440,3 +452,9 @@ class TestSetGoalie:
         mock_table.get_item.return_value = {"Item": _make_event()}
         set_goalie("key1", "user1")
         mock_table.put_item.assert_called_once()
+
+    def test_removes_user_from_rsvp_lists_when_set_as_goalie(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        result = set_goalie("key1", "user1")
+        assert "user1" not in result["accepted"]
+        assert result["goalie"] == ["user1"]
