@@ -89,6 +89,7 @@ Resources:
                 Resource: !GetAtt BenchBossTable.Arn
               - Effect: Allow
                 Action:
+                  - dynamodb:DescribeStream
                   - dynamodbstreams:GetRecords
                   - dynamodbstreams:GetShardIterator
                   - dynamodbstreams:DescribeStream
