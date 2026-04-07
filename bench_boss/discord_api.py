@@ -78,7 +78,11 @@ def _rsvp_field(action: str, users: list[str], names: dict[str, str] | None = No
     label = _RSVP_LABELS[action]
     count = len(users)
     if users:
-        value = "\n".join(names[uid] if names and uid in names else f"<@{uid}>" for uid in users)
+        sorted_users = sorted(
+            users,
+            key=lambda uid: (names[uid] if names and uid in names else f"<@{uid}>").endswith("*"),
+        )
+        value = "\n".join(names[uid] if names and uid in names else f"<@{uid}>" for uid in sorted_users)
     else:
         value = "-"
     return {"name": f"{label} ({count})", "value": value, "inline": True}

@@ -120,6 +120,35 @@ class TestBuildEventEmbed:
         assert "Alice" in accepted_field["value"]
         assert "<@user2>" in accepted_field["value"]
 
+    def test_rsvp_fulltime_players_listed_before_non_fulltime(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["sub1", "full1", "sub2"], [], [],
+            names={"sub1": "Bob*", "full1": "Alice", "sub2": "Carol*"},
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        lines = accepted_field["value"].split("\n")
+        assert lines[0] == "Alice"
+        assert set(lines[1:]) == {"Bob*", "Carol*"}
+
+    def test_rsvp_all_fulltime_order_preserved(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["u1", "u2"], [], [],
+            names={"u1": "Alice", "u2": "Bob"},
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "Alice" in accepted_field["value"]
+        assert "Bob" in accepted_field["value"]
+        assert "*" not in accepted_field["value"]
+
+    def test_rsvp_all_non_fulltime_order_preserved(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["u1", "u2"], [], [],
+            names={"u1": "Alice*", "u2": "Bob*"},
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "Alice*" in accepted_field["value"]
+        assert "Bob*" in accepted_field["value"]
+
     def test_rsvp_field_shows_dash_when_empty(self):
         embed = build_event_embed("Event", START, None, None, None, [], [], [])
         accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
