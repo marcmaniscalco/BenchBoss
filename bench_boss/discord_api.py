@@ -241,7 +241,7 @@ def build_add_rsvp_modal(event_key: str) -> dict:
                         "custom_id": "action",
                         "label": "RSVP Status",
                         "style": 1,  # SHORT
-                        "placeholder": "accepted / declined / tentative  (or a / d / t)",
+                        "placeholder": "accepted / declined / tentative / goalie  (or a / d / t / g)",
                         "required": True,
                         "min_length": 1,
                         "max_length": 8,

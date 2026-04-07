@@ -49,7 +49,7 @@ DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7
 MODAL = 9
 
-_ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative"}
+_ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative", "g": "goalie"}
 
 
 def _has_filltime_role(roles: list) -> bool:
@@ -385,6 +385,15 @@ def _handle_goalie_rsvp(body: dict) -> dict:
     ):
         display_name = display_name + "*"
 
+    event = get_event(event_key)
+    if event is None:
+        return _message("Event not found.")
+    current_goalie = event.get("goalie", [])
+    if current_goalie and user_id not in current_goalie:
+        names_map = event.get("member_names") or {}
+        existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
+        return _ephemeral(f"**{existing}** is already the goalie. Remove them first before adding a new one.")
+
     try:
         event = set_goalie(event_key, user_id, display_name)
         logger.info("Goalie RSVP for event %s by user %s", event_key, user_id)
@@ -512,8 +521,29 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
         action = _ACTION_ALIASES.get(action, action)
+        if action == "goalie":
+            event = get_event(event_key)
+            if event is None:
+                return _ephemeral("Event not found.")
+            current_goalie = event.get("goalie", [])
+            if user_id in current_goalie:
+                return _ephemeral("You're already the goalie — only one is needed!")
+            if current_goalie:
+                names_map = event.get("member_names") or {}
+                existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
+                return _ephemeral(f"**{existing}** is already the goalie. Remove them first before adding a new one.")
+            try:
+                event = set_goalie(event_key, user_id, display_name)
+            except ValueError:
+                return _ephemeral("Event not found.")
+            except Exception as e:
+                logger.error("Failed to set goalie for event %s: %s", event_key, e)
+                return _ephemeral(f"Failed to update goalie: {e}")
+            if bot_token:
+                _update_channel_message(event, bot_token)
+            return _ephemeral(f"Added **{display_name or user_id}** as goalie.")
         if action not in RSVP_ACTIONS:
-            return _ephemeral("Invalid RSVP status — use: accepted, declined, or tentative.")
+            return _ephemeral("Invalid RSVP status — use: accepted, declined, tentative, or goalie.")
         try:
             event = set_rsvp(event_key, user_id, action, display_name)
         except ValueError:

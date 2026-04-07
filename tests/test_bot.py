@@ -943,6 +943,62 @@ class TestRemoveRsvpButton:
 
 
 # ---------------------------------------------------------------------------
+# handle_interaction — Goalie button
+# ---------------------------------------------------------------------------
+
+
+class TestGoalieRsvpButton:
+    def _body(self, event_key="key1", user_id="user1"):
+        return {
+            "type": MESSAGE_COMPONENT,
+            "member": {"user": {"id": user_id}, "roles": []},
+            "data": {"custom_id": f"goalie_rsvp:{event_key}"},
+        }
+
+    def test_sets_user_as_goalie_when_slot_empty(self):
+        event = make_stored_event(goalie=[])
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_goalie", return_value=event) as mock_set,
+        ):
+            handle_interaction(self._body())
+        mock_set.assert_called_once()
+
+    def test_toggles_off_when_user_is_already_goalie(self):
+        event = make_stored_event(goalie=["user1"])
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_goalie", return_value=event) as mock_set,
+        ):
+            handle_interaction(self._body(user_id="user1"))
+        mock_set.assert_called_once()
+
+    def test_returns_error_when_someone_else_is_goalie(self):
+        event = make_stored_event(goalie=["other_user"])
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(self._body(user_id="user1"))
+        assert result["body"]["data"]["flags"] == 64
+        assert "Remove them first" in result["body"]["data"]["content"]
+
+    def test_error_message_includes_existing_goalie_mention(self):
+        event = make_stored_event(goalie=["other_user"])
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(self._body(user_id="user1"))
+        assert "<@other_user>" in result["body"]["data"]["content"]
+
+    def test_error_message_uses_display_name_when_available(self):
+        event = make_stored_event(goalie=["other_user"], member_names={"other_user": "Alice"})
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(self._body(user_id="user1"))
+        assert "Alice" in result["body"]["data"]["content"]
+
+    def test_returns_error_when_event_not_found(self):
+        with patch("bench_boss.bot.get_event", return_value=None):
+            result = handle_interaction(self._body())
+        assert "not found" in result["body"]["data"]["content"].lower()
+
+
+# ---------------------------------------------------------------------------
 # handle_interaction — RSVP edit modal submit
 # ---------------------------------------------------------------------------
 
@@ -1068,6 +1124,51 @@ class TestRsvpEditModalSubmit:
             result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "bad"), bot_token="tok")
         assert result["body"]["data"]["flags"] == 64
         assert "Invalid RSVP status" in result["body"]["data"]["content"]
+        assert "goalie" in result["body"]["data"]["content"]
+
+    def test_single_letter_g_maps_to_goalie(self):
+        event = make_stored_event()
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_goalie", return_value=event) as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "g"), bot_token="tok")
+        mock_set.assert_called_once_with("key1", "123456789", None)
+
+    def test_add_goalie_sets_goalie_when_slot_empty(self):
+        event = make_stored_event()
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_goalie", return_value=event) as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+        mock_set.assert_called_once()
+
+    def test_add_goalie_returns_error_when_user_already_goalie(self):
+        event = make_stored_event(goalie=["123456789"])
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+        assert result["body"]["data"]["flags"] == 64
+        assert "already the goalie" in result["body"]["data"]["content"]
+
+    def test_add_goalie_returns_error_when_someone_else_is_goalie(self):
+        event = make_stored_event(goalie=["999999999"])
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+        assert result["body"]["data"]["flags"] == 64
+        assert "Remove them first" in result["body"]["data"]["content"]
+
+    def test_add_goalie_updates_channel_message(self):
+        event = make_stored_event()
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_goalie", return_value=event),
+            patch("bench_boss.bot._update_channel_message") as mock_update,
+        ):
+            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+        mock_update.assert_called_once_with(event, "tok")
 
     def test_event_not_found_returns_ephemeral_error(self):
         with patch("bench_boss.bot.set_rsvp", side_effect=ValueError):

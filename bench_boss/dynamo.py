@@ -148,16 +148,20 @@ def set_rsvp(event_key: str, user_id: str, action: str, display_name: str | None
 
 
 def remove_rsvp(event_key: str, user_id: str) -> dict:
-    """Remove a user from all RSVP lists. Returns the updated event item."""
+    """Remove a user from all RSVP lists and the goalie slot. Returns the updated event item."""
     event = get_event(event_key)
     if event is None:
         logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
-    if not any(user_id in event.get(a, []) for a in RSVP_ACTIONS):
+    in_rsvp = any(user_id in event.get(a, []) for a in RSVP_ACTIONS)
+    in_goalie = user_id in event.get(GOALIE_ACTION, [])
+    if not in_rsvp and not in_goalie:
         raise ValueError("User is not in the RSVP list.")
 
     _clear_user_from_rsvps(event, user_id)
+    if in_goalie:
+        event[GOALIE_ACTION] = []
     names = dict(event.get("member_names") or {})
     names.pop(user_id, None)
     event["member_names"] = names

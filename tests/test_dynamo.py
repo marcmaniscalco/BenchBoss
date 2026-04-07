@@ -296,6 +296,16 @@ class TestRemoveRsvp:
         with pytest.raises(ValueError, match="not in the RSVP list"):
             remove_rsvp("key1", "user1")
 
+    def test_removes_user_from_goalie(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(goalie=["user1"])}
+        result = remove_rsvp("key1", "user1")
+        assert result["goalie"] == []
+
+    def test_user_only_in_goalie_does_not_raise(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(goalie=["user1"])}
+        result = remove_rsvp("key1", "user1")
+        assert result["goalie"] == []
+
     def test_raises_when_event_not_found(self, mock_table):
         mock_table.get_item.return_value = {}
         with pytest.raises(ValueError):
