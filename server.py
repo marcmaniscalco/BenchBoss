@@ -10,8 +10,9 @@ import os
 from flask import Flask, jsonify, request
 
 from bench_boss.bot import handle_interaction, verify_signature
+from bench_boss.logging_config import configure_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_logging()
 logger = logging.getLogger(__name__)
 
 DISCORD_PUBLIC_KEY = os.environ["DISCORD_PUBLIC_KEY"]

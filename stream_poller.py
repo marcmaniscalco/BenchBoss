@@ -10,9 +10,10 @@ import time
 
 import boto3
 
+from bench_boss.logging_config import configure_logging
 from bench_boss.stream_handler import handle_stream_records
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+configure_logging()
 logger = logging.getLogger(__name__)
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
