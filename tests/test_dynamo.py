@@ -116,6 +116,19 @@ class TestSaveEvent:
         item = mock_table.put_item.call_args[1]["Item"]
         assert "channel_id" not in item
 
+    def test_stores_created_at_field(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "created_at" in item
+
+    def test_created_at_is_iso8601_string(self, mock_table):
+        from datetime import datetime
+
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        dt = datetime.fromisoformat(item["created_at"])
+        assert dt.tzinfo is not None  # timezone-aware
+
 
 # ---------------------------------------------------------------------------
 # find_event_in_channel

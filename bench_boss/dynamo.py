@@ -61,6 +61,7 @@ def save_event(
         "tentative": [],
         "goalie": [],
         "ttl": _ttl_timestamp(end, start),
+        "created_at": datetime.now(UTC).isoformat(),
     }
     if end is not None:
         item["end"] = end
