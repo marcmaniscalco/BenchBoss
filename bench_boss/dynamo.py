@@ -36,8 +36,8 @@ def _ttl_timestamp(end: str | None, start: str) -> int:
     base = datetime.fromisoformat(end if end else start)
     if base.tzinfo is None:
         base = base.replace(tzinfo=UTC)
-    return int((base + timedelta(hours=EVENT_TTL_HOURS)).timestamp())
-
+    # return int((base + timedelta(hours=EVENT_TTL_HOURS)).timestamp())
+    return int((base + timedelta(minutes=EVENT_TTL_HOURS)).timestamp())
 
 def save_event(
     event_key: str,
