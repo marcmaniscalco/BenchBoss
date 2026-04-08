@@ -20,10 +20,22 @@ def handle_stream_records(records: list[dict], bot_token: str) -> None:
 
 
 def _handle_record(record: dict, bot_token: str) -> None:
-    if record.get("eventName") != "REMOVE":
+    event_name = record.get("eventName")
+    user_identity = record.get("userIdentity", {})
+    logger.debug(
+        "Stream record: eventName=%s userIdentity=%s", event_name, user_identity
+    )
+
+    if event_name != "REMOVE":
+        logger.debug("Skipping non-REMOVE event: %s", event_name)
         return
+
     # Only act on TTL-triggered deletions, not manual bot deletes
-    if record.get("userIdentity", {}).get("type") != "Service":
+    if user_identity.get("type") != "Service":
+        logger.info(
+            "Skipping REMOVE — not a TTL expiration (userIdentity.type=%r)",
+            user_identity.get("type"),
+        )
         return
 
     old = record.get("dynamodb", {}).get("OldImage", {})
@@ -32,6 +44,15 @@ def _handle_record(record: dict, bot_token: str) -> None:
     message_id = old.get("message_id", {}).get("S")
     webcal_url = old.get("webcal_url", {}).get("S")
     guild_id = old.get("guild_id", {}).get("S")
+
+    logger.info(
+        "TTL expiration: event_key=%s channel_id=%s message_id=%s webcal_url=%s guild_id=%s",
+        event_key,
+        channel_id,
+        message_id,
+        webcal_url,
+        guild_id,
+    )
 
     if not channel_id or not message_id:
         logger.info(
@@ -120,11 +141,14 @@ def _post_next_event(
 
 
 def _delete_discord_message(channel_id: str, message_id: str, bot_token: str) -> None:
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
+    logger.info("Deleting Discord message: DELETE %s", url)
     resp = requests.delete(
-        f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
+        url,
         headers={"Authorization": f"Bot {bot_token}"},
         timeout=10,
     )
+    logger.debug("Discord DELETE response: status=%s body=%s", resp.status_code, resp.text)
     if resp.ok:
         logger.info(
             "Deleted Discord message %s in channel %s", message_id, channel_id
