@@ -90,10 +90,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - dynamodb:DescribeStream
-                  - dynamodbstreams:GetRecords
-                  - dynamodbstreams:GetShardIterator
-                  - dynamodbstreams:DescribeStream
-                  - dynamodbstreams:ListStreams
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
                 Resource: !GetAtt BenchBossTable.StreamArn
 
   # ── Logging ─────────────────────────────────────────────────────────────────
