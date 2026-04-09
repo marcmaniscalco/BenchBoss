@@ -26,7 +26,8 @@ def make_remove_record(
         },
     }
     if identity_type:
-        record["userIdentity"] = {"type": identity_type, "principalId": "dynamodb.amazonaws.com"}
+        # Use capital keys to match the actual DynamoDB Streams API response format
+        record["userIdentity"] = {"Type": identity_type, "PrincipalId": "dynamodb.amazonaws.com"}
     if channel_id:
         record["dynamodb"]["OldImage"]["channel_id"] = {"S": channel_id}
     if message_id:
@@ -86,6 +87,14 @@ class TestIgnoredRecords:
         with patch("bench_boss.stream_handler.requests.delete") as mock_del:
             handle_stream_records([record], bot_token="tok")
         mock_del.assert_not_called()
+
+    def test_lowercase_type_key_is_accepted(self):
+        """Fallback: accept lowercase 'type' key in case API ever returns it."""
+        record = make_remove_record(webcal_url=None)
+        record["userIdentity"] = {"type": "Service", "principalId": "dynamodb.amazonaws.com"}
+        with patch("bench_boss.stream_handler.requests.delete", return_value=MagicMock(ok=True)) as mock_del:
+            handle_stream_records([record], bot_token="tok")
+        mock_del.assert_called_once()
 
     def test_missing_user_identity_is_ignored(self):
         record = make_remove_record()

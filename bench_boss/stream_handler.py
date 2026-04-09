@@ -28,11 +28,13 @@ def _handle_record(record: dict, bot_token: str) -> None:
         logger.debug("Skipping non-REMOVE event: %s", event_name)
         return
 
-    # Only act on TTL-triggered deletions, not manual bot deletes
-    if user_identity.get("type") != "Service":
+    # Only act on TTL-triggered deletions, not manual bot deletes.
+    # The DynamoDB Streams API returns "Type" (capital T) for TTL expirations.
+    identity_type = user_identity.get("Type") or user_identity.get("type")
+    if identity_type != "Service":
         logger.info(
-            "Skipping REMOVE — not a TTL expiration (userIdentity.type=%r)",
-            user_identity.get("type"),
+            "Skipping REMOVE — not a TTL expiration (userIdentity.Type=%r)",
+            identity_type,
         )
         return
 
