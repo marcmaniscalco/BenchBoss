@@ -220,6 +220,13 @@ def _handle_schedule(
     )
     components = build_rsvp_components(event_key)
 
+    if app_id and interaction_token:
+        threading.Thread(
+            target=_fetch_and_store_message_ref,
+            args=(app_id, interaction_token, event_key),
+            daemon=True,
+        ).start()
+
     return {
         "statusCode": 200,
         "body": {

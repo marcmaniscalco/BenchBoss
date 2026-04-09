@@ -308,6 +308,29 @@ class TestScheduleInteraction:
         assert kwargs["location"] == "Room 1"
         assert kwargs["guild_id"] == "g1"
 
+    def test_message_ref_fetched_in_background_when_token_present(self):
+        event = make_calendar_event("Game Night")
+        body = {
+            "type": APPLICATION_COMMAND,
+            "guild_id": "g1",
+            "application_id": "app1",
+            "token": "tok1",
+            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+        }
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.save_event"),
+            patch("bench_boss.bot.threading.Thread") as mock_thread,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            handle_interaction(body)
+
+        mock_thread.assert_called_once()
+        kwargs = mock_thread.call_args[1]
+        assert kwargs["target"] == _fetch_and_store_message_ref
+        assert kwargs["daemon"] is True
+        mock_thread.return_value.start.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # handle_interaction — RSVP button clicks
