@@ -22,9 +22,7 @@ def handle_stream_records(records: list[dict], bot_token: str) -> None:
 def _handle_record(record: dict, bot_token: str) -> None:
     event_name = record.get("eventName")
     user_identity = record.get("userIdentity", {})
-    logger.debug(
-        "Stream record: eventName=%s userIdentity=%s", event_name, user_identity
-    )
+    logger.info("Stream record raw: %s", record)
 
     if event_name != "REMOVE":
         logger.debug("Skipping non-REMOVE event: %s", event_name)
