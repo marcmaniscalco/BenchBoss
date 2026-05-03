@@ -1,13 +1,17 @@
 """Handles DynamoDB Stream events — used for TTL-based Discord message cleanup."""
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
 import requests
-import logging
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.discord_api import build_event_embed, build_no_events_embed, build_rsvp_components
+from bench_boss.discord_api import (
+    build_event_embed,
+    build_no_events_embed,
+    build_rsvp_components,
+)
 from bench_boss.dynamo import save_event, store_message_ref
 
 logger = logging.getLogger(__name__)
@@ -46,7 +50,8 @@ def _handle_record(record: dict, bot_token: str) -> None:
     guild_id = old.get("guild_id", {}).get("S")
 
     logger.info(
-        "TTL expiration: event_key=%s channel_id=%s message_id=%s webcal_url=%s guild_id=%s",
+        "TTL expiration: event_key=%s channel_id=%s message_id=%s "
+        "webcal_url=%s guild_id=%s",
         event_key,
         channel_id,
         message_id,
@@ -148,11 +153,11 @@ def _delete_discord_message(channel_id: str, message_id: str, bot_token: str) ->
         headers={"Authorization": f"Bot {bot_token}"},
         timeout=10,
     )
-    logger.debug("Discord DELETE response: status=%s body=%s", resp.status_code, resp.text)
+    logger.debug(
+        "Discord DELETE response: status=%s body=%s", resp.status_code, resp.text
+    )
     if resp.ok:
-        logger.info(
-            "Deleted Discord message %s in channel %s", message_id, channel_id
-        )
+        logger.info("Deleted Discord message %s in channel %s", message_id, channel_id)
     else:
         logger.warning(
             "Failed to delete Discord message %s: %s %s",

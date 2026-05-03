@@ -45,7 +45,10 @@ def _format_dt(start: datetime, end: datetime | None) -> str:
         end_hour = end.hour % 12 or 12
         end_minute = end.strftime("%M")
         end_ampm = "AM" if end.hour < 12 else "PM"
-        return f"{date_str}\n{time_str} – {end_hour}:{end_minute} {end_ampm} {end_tz_label}"
+        return (
+            f"{date_str}\n{time_str} – "
+            f"{end_hour}:{end_minute} {end_ampm} {end_tz_label}"
+        )
     return f"{date_str}\n{time_str}"
 
 
@@ -65,7 +68,11 @@ def _build_gcal_url(
     start_str = _fmt(start)
     end_str = _fmt(end) if end else start_str
 
-    params: dict = {"action": "TEMPLATE", "text": name, "dates": f"{start_str}/{end_str}"}
+    params: dict = {
+        "action": "TEMPLATE",
+        "text": name,
+        "dates": f"{start_str}/{end_str}",
+    }
     if location:
         params["location"] = location
     if description:
@@ -74,15 +81,22 @@ def _build_gcal_url(
     return "https://calendar.google.com/calendar/render?" + urlencode(params)
 
 
-def _rsvp_field(action: str, users: list[str], names: dict[str, str] | None = None) -> dict:
+def _rsvp_field(
+    action: str, users: list[str], names: dict[str, str] | None = None
+) -> dict:
     label = _RSVP_LABELS[action]
     count = len(users)
     if users:
         sorted_users = sorted(
             users,
-            key=lambda uid: (names[uid] if names and uid in names else f"<@{uid}>").endswith("*"),
+            key=lambda uid: (
+                names[uid] if names and uid in names else f"<@{uid}>"
+            ).endswith("*"),
         )
-        value = "\n".join(names[uid] if names and uid in names else f"<@{uid}>" for uid in sorted_users)
+        value = "\n".join(
+            names[uid] if names and uid in names else f"<@{uid}>"
+            for uid in sorted_users
+        )
     else:
         value = "-"
     return {"name": f"{label} ({count})", "value": value, "inline": True}
@@ -117,14 +131,20 @@ def build_event_embed(
 
     gcal_url = _build_gcal_url(name, start, end, location, description)
     fields.append(
-        {"name": "🗓️ Add to Calendar", "value": f"[Google Calendar]({gcal_url})", "inline": False}
+        {
+            "name": "🗓️ Add to Calendar",
+            "value": f"[Google Calendar]({gcal_url})",
+            "inline": False,
+        }
     )
 
     # Blank separator before RSVP section
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
 
     goalie_list = goalie or []
-    goalie_name = (names.get(goalie_list[0]) if names and goalie_list else None) or (f"<@{goalie_list[0]}>" if goalie_list else "-")
+    goalie_name = (names.get(goalie_list[0]) if names and goalie_list else None) or (
+        f"<@{goalie_list[0]}>" if goalie_list else "-"
+    )
     fields.append({"name": "🇬 Goalie", "value": goalie_name, "inline": False})
 
     fields.extend(
@@ -183,11 +203,10 @@ def build_rsvp_components(event_key: str) -> list[dict]:
     ]
 
 
-
 def build_delete_confirm_buttons(
     event_key: str, channel_id: str, message_id: str
 ) -> list[dict]:
-    """Return an action row with Delete and Cancel buttons for event deletion confirmation."""
+    """Action row with Delete and Cancel buttons for delete confirmation."""
     return [
         {
             "type": 1,  # ACTION_ROW
@@ -196,7 +215,9 @@ def build_delete_confirm_buttons(
                     "type": 2,  # BUTTON
                     "style": 4,  # DANGER (red)
                     "label": "Delete",
-                    "custom_id": f"delete_confirm:{event_key}:{channel_id}:{message_id}",
+                    "custom_id": (
+                        f"delete_confirm:{event_key}:{channel_id}:{message_id}"
+                    ),
                 },
                 {
                     "type": 2,  # BUTTON
@@ -245,7 +266,10 @@ def build_add_rsvp_modal(event_key: str) -> dict:
                         "custom_id": "action",
                         "label": "RSVP Status",
                         "style": 1,  # SHORT
-                        "placeholder": "accepted / declined / tentative / goalie  (or a / d / t / g)",
+                        "placeholder": (
+                            "accepted / declined / tentative / goalie  "
+                            "(or a / d / t / g)"
+                        ),
                         "required": True,
                         "min_length": 1,
                         "max_length": 8,

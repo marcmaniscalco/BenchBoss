@@ -55,6 +55,7 @@ _ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative", "g": "goa
 def _has_fulltime_role(roles: list) -> bool:
     return FULLTIME_ROLE_ID in roles
 
+
 _ADMINISTRATOR = 1 << 3
 
 
@@ -143,7 +144,9 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
 
     if interaction_type == MODAL_SUBMIT:
         custom_id = body.get("data", {}).get("custom_id", "")
-        if custom_id.startswith("add_rsvp_modal:") or custom_id.startswith("remove_rsvp_modal:"):
+        if custom_id.startswith("add_rsvp_modal:") or custom_id.startswith(
+            "remove_rsvp_modal:"
+        ):
             return _handle_rsvp_edit_submit(body, bot_token)
         return {"statusCode": 400, "body": {"error": "Unhandled modal submission"}}
 
@@ -252,8 +255,10 @@ def _handle_rsvp(body: dict) -> dict:
         or user_data.get("username")
         or None
     )
-    if member and display_name is not None and not _has_fulltime_role(
-        member.get("roles", [])
+    if (
+        member
+        and display_name is not None
+        and not _has_fulltime_role(member.get("roles", []))
     ):
         display_name = display_name + "*"
 
@@ -329,7 +334,9 @@ def _handle_delete_confirm(body: dict, bot_token: str) -> dict:
         delete_event(event_key)
         logger.info("Deleted event %s", event_key)
     except ValueError:
-        logger.debug("Event %s not found in DB, continuing with message deletion", event_key)
+        logger.debug(
+            "Event %s not found in DB, continuing with message deletion", event_key
+        )
     except Exception as e:
         logger.error("Failed to delete event %s: %s", event_key, e)
         return _ephemeral(f"Failed to delete event: {e}")
@@ -339,14 +346,20 @@ def _handle_delete_confirm(body: dict, bot_token: str) -> dict:
 
     return {
         "statusCode": 200,
-        "body": {"type": UPDATE_MESSAGE, "data": {"content": "Event deleted.", "components": []}},
+        "body": {
+            "type": UPDATE_MESSAGE,
+            "data": {"content": "Event deleted.", "components": []},
+        },
     }
 
 
 def _handle_delete_cancel() -> dict:
     return {
         "statusCode": 200,
-        "body": {"type": UPDATE_MESSAGE, "data": {"content": "Deletion cancelled.", "components": []}},
+        "body": {
+            "type": UPDATE_MESSAGE,
+            "data": {"content": "Deletion cancelled.", "components": []},
+        },
     }
 
 
@@ -357,7 +370,10 @@ def _store_button_refs(body: dict, event_key: str) -> None:
     if channel_id and message_id:
         store_message_ref(event_key, channel_id, message_id)
     else:
-        logger.warning("Button interaction missing channel_id or message_id for event %s", event_key)
+        logger.warning(
+            "Button interaction missing channel_id or message_id for event %s",
+            event_key,
+        )
     interaction_token = body.get("token", "")
     app_id = body.get("application_id", "")
     if interaction_token and app_id:
@@ -367,13 +383,19 @@ def _store_button_refs(body: dict, event_key: str) -> None:
 def _handle_add_rsvp_button(body: dict) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
-    return {"statusCode": 200, "body": {"type": MODAL, "data": build_add_rsvp_modal(event_key)}}
+    return {
+        "statusCode": 200,
+        "body": {"type": MODAL, "data": build_add_rsvp_modal(event_key)},
+    }
 
 
 def _handle_remove_rsvp_button(body: dict) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
-    return {"statusCode": 200, "body": {"type": MODAL, "data": build_remove_rsvp_modal(event_key)}}
+    return {
+        "statusCode": 200,
+        "body": {"type": MODAL, "data": build_remove_rsvp_modal(event_key)},
+    }
 
 
 def _handle_goalie_rsvp(body: dict) -> dict:
@@ -387,8 +409,10 @@ def _handle_goalie_rsvp(body: dict) -> dict:
         or user_data.get("username")
         or None
     )
-    if member and display_name is not None and not _has_fulltime_role(
-        member.get("roles", [])
+    if (
+        member
+        and display_name is not None
+        and not _has_fulltime_role(member.get("roles", []))
     ):
         display_name = display_name + "*"
 
@@ -399,7 +423,10 @@ def _handle_goalie_rsvp(body: dict) -> dict:
     if current_goalie and user_id not in current_goalie:
         names_map = event.get("member_names") or {}
         existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
-        return _ephemeral(f"**{existing}** is already the goalie. Remove them first before adding a new one.")
+        return _ephemeral(
+            f"**{existing}** is already the goalie. "
+            "Remove them first before adding a new one."
+        )
 
     try:
         event = set_goalie(event_key, user_id, display_name)
@@ -450,7 +477,10 @@ def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | Non
     resp = requests.get(
         f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
         params={"query": query, "limit": 1},
-        headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json",
+        },
         timeout=10,
     )
     if not resp.ok:
@@ -464,19 +494,26 @@ def _fetch_guild_member(guild_id: str, user_id: str, bot_token: str) -> dict | N
     """Fetch the raw guild member object from the Discord API."""
     resp = requests.get(
         f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}",
-        headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json",
+        },
         timeout=10,
     )
     if not resp.ok:
         logger.warning(
             "Failed to fetch member %s from guild %s: %s",
-            user_id, guild_id, resp.status_code,
+            user_id,
+            guild_id,
+            resp.status_code,
         )
         return None
     return resp.json()
 
 
-def _fetch_member_display_name(guild_id: str, user_id: str, bot_token: str) -> str | None:
+def _fetch_member_display_name(
+    guild_id: str, user_id: str, bot_token: str
+) -> str | None:
     """Fetch a guild member's display name (server nick > global name > username)."""
     member = _fetch_guild_member(guild_id, user_id, bot_token)
     if member is None:
@@ -508,20 +545,31 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         if guild_id and bot_token:
             user_id = _search_guild_member(guild_id, raw_user, bot_token)
         if not user_id:
-            return _ephemeral("Could not find that user — try again with their @mention or numeric ID.")
+            return _ephemeral(
+                "Could not find that user — try again with their "
+                "@mention or numeric ID."
+            )
 
     guild_id = body.get("guild_id")
     guild_member = (
-        _fetch_guild_member(guild_id, user_id, bot_token) if guild_id and bot_token else None
+        _fetch_guild_member(guild_id, user_id, bot_token)
+        if guild_id and bot_token
+        else None
     )
     display_name = (
-        guild_member.get("nick")
-        or guild_member.get("user", {}).get("global_name")
-        or guild_member.get("user", {}).get("username")
-        or None
-    ) if guild_member else None
-    if guild_member is not None and display_name is not None and not _has_fulltime_role(
-        guild_member.get("roles", [])
+        (
+            guild_member.get("nick")
+            or guild_member.get("user", {}).get("global_name")
+            or guild_member.get("user", {}).get("username")
+            or None
+        )
+        if guild_member
+        else None
+    )
+    if (
+        guild_member is not None
+        and display_name is not None
+        and not _has_fulltime_role(guild_member.get("roles", []))
     ):
         display_name = display_name + "*"
 
@@ -538,7 +586,10 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
             if current_goalie:
                 names_map = event.get("member_names") or {}
                 existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
-                return _ephemeral(f"**{existing}** is already the goalie. Remove them first before adding a new one.")
+                return _ephemeral(
+                    f"**{existing}** is already the goalie. "
+                    "Remove them first before adding a new one."
+                )
             try:
                 event = set_goalie(event_key, user_id, display_name)
             except ValueError:
@@ -550,7 +601,9 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 _update_channel_message(event, bot_token)
             return _ephemeral(f"Added **{display_name or user_id}** as goalie.")
         if action not in RSVP_ACTIONS:
-            return _ephemeral("Invalid RSVP status — use: accepted, declined, tentative, or goalie.")
+            return _ephemeral(
+                "Invalid RSVP status — use: accepted, declined, tentative, or goalie."
+            )
         try:
             event = set_rsvp(event_key, user_id, action, display_name)
         except ValueError:
@@ -580,7 +633,13 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
     channel_id = event.get("channel_id")
     message_id = event.get("message_id")
     if not channel_id or not message_id:
-        logger.warning("Skipping channel update for event %s — no message ref stored (channel=%r message=%r)", event.get("event_key"), channel_id, message_id)
+        logger.warning(
+            "Skipping channel update for event %s — no message ref stored "
+            "(channel=%r message=%r)",
+            event.get("event_key"),
+            channel_id,
+            message_id,
+        )
         return
 
     start = datetime.fromisoformat(event["start"])
@@ -602,24 +661,43 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
 
     if bot_token:
         url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
-        headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+        headers = {
+            "Authorization": f"Bot {bot_token}",
+            "Content-Type": "application/json",
+        }
     else:
         interaction_token = event.get("interaction_token")
         app_id = event.get("app_id")
         if not interaction_token or not app_id:
-            logger.warning("Skipping channel update for event %s — no bot token or interaction token", event_key)
+            logger.warning(
+                "Skipping channel update for event %s — no bot token "
+                "or interaction token",
+                event_key,
+            )
             return
         url = f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/{message_id}"
         headers = {"Content-Type": "application/json"}
 
-    resp = requests.patch(url, json={"embeds": [embed], "components": components}, headers=headers, timeout=10)
+    resp = requests.patch(
+        url,
+        json={"embeds": [embed], "components": components},
+        headers=headers,
+        timeout=10,
+    )
     if resp.ok:
         logger.info("Updated channel message for event %s", event_key)
     else:
-        logger.warning("Failed to update channel message for event %s: %s %s", event_key, resp.status_code, resp.text)
+        logger.warning(
+            "Failed to update channel message for event %s: %s %s",
+            event_key,
+            resp.status_code,
+            resp.text,
+        )
 
 
-def _fetch_and_store_message_ref(app_id: str, interaction_token: str, event_key: str) -> None:
+def _fetch_and_store_message_ref(
+    app_id: str, interaction_token: str, event_key: str
+) -> None:
     """Fetch the original interaction response message and persist its ID."""
     time.sleep(MESSAGE_FETCH_DELAY)  # Give Discord time to persist the message
     resp = requests.get(
@@ -627,20 +705,31 @@ def _fetch_and_store_message_ref(app_id: str, interaction_token: str, event_key:
         timeout=10,
     )
     if not resp.ok:
-        logger.warning("Failed to fetch original message for event %s: %s", event_key, resp.status_code)
+        logger.warning(
+            "Failed to fetch original message for event %s: %s",
+            event_key,
+            resp.status_code,
+        )
         return
     data = resp.json()
     message_id = data.get("id")
     channel_id = data.get("channel_id")
     if message_id and channel_id:
         store_message_ref(event_key, channel_id, message_id)
-        logger.info("Stored message ref for event %s (channel=%s message=%s)", event_key, channel_id, message_id)
+        logger.info(
+            "Stored message ref for event %s (channel=%s message=%s)",
+            event_key,
+            channel_id,
+            message_id,
+        )
     else:
-        logger.warning("Original message for event %s missing id or channel_id", event_key)
+        logger.warning(
+            "Original message for event %s missing id or channel_id", event_key
+        )
 
 
 def _delete_original_message(app_id: str, token: str) -> None:
-    """Delete the original event message after the interaction callback has been sent."""
+    """Delete the original event message after the interaction callback was sent."""
     time.sleep(MESSAGE_FETCH_DELAY)
     requests.delete(
         f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
@@ -653,18 +742,25 @@ def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) ->
     try:
         resp = requests.delete(
             f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
-            headers={"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bot {bot_token}",
+                "Content-Type": "application/json",
+            },
             timeout=10,
         )
         if not resp.ok:
             logger.warning(
                 "Failed to delete channel message %s in channel %s: %s",
-                message_id, channel_id, resp.status_code,
+                message_id,
+                channel_id,
+                resp.status_code,
             )
     except Exception as e:
         logger.error(
             "Error deleting channel message %s in channel %s: %s",
-            message_id, channel_id, e,
+            message_id,
+            channel_id,
+            e,
         )
 
 
@@ -723,7 +819,9 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
         timeout=10,
     )
     if not dm_resp.ok:
-        logger.error("Failed to create DM channel for user %s: %s", user_id, dm_resp.status_code)
+        logger.error(
+            "Failed to create DM channel for user %s: %s", user_id, dm_resp.status_code
+        )
         return
 
     channel_id = dm_resp.json().get("id")
@@ -736,14 +834,22 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
     if msg_resp.ok:
         logger.info("Sent events DM to user %s", user_id)
     else:
-        logger.error("Failed to send events DM to user %s: %s %s", user_id, msg_resp.status_code, msg_resp.text)
+        logger.error(
+            "Failed to send events DM to user %s: %s %s",
+            user_id,
+            msg_resp.status_code,
+            msg_resp.text,
+        )
 
 
 def _message(content: str, ephemeral: bool = False) -> dict:
     data: dict = {"content": content}
     if ephemeral:
         data["flags"] = 64
-    return {"statusCode": 200, "body": {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": data}}
+    return {
+        "statusCode": 200,
+        "body": {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": data},
+    }
 
 
 def _ephemeral(content: str) -> dict:

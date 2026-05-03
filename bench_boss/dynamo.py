@@ -1,9 +1,8 @@
 """DynamoDB persistence for event RSVP state."""
 
+import logging
 import os
 from datetime import UTC, datetime, timedelta
-
-import logging
 
 import boto3
 from boto3.dynamodb.conditions import Attr
@@ -37,6 +36,7 @@ def _ttl_timestamp(end: str | None, start: str) -> int:
     if base.tzinfo is None:
         base = base.replace(tzinfo=UTC)
     return int((base + timedelta(hours=EVENT_TTL_HOURS)).timestamp())
+
 
 def save_event(
     event_key: str,
@@ -78,16 +78,18 @@ def save_event(
 
 
 def find_event_in_channel(channel_id: str, name: str, start: str) -> dict | None:
-    """Return an existing active event in the channel with the same name and start, or None."""
+    """Return an active event in the channel with the same name and start, or None."""
     resp = _table().scan(
-        FilterExpression=Attr("channel_id").eq(channel_id) & Attr("name").eq(name) & Attr("start").eq(start),
+        FilterExpression=Attr("channel_id").eq(channel_id)
+        & Attr("name").eq(name)
+        & Attr("start").eq(start),
     )
     items = resp.get("Items", [])
     return items[0] if items else None
 
 
 def store_message_ref(event_key: str, channel_id: str, message_id: str) -> None:
-    """Persist the Discord channel/message IDs on the event for future channel updates."""
+    """Persist the Discord channel/message IDs for future channel updates."""
     _table().update_item(
         Key={"event_key": event_key},
         UpdateExpression="SET channel_id = :c, message_id = :m",
@@ -96,7 +98,7 @@ def store_message_ref(event_key: str, channel_id: str, message_id: str) -> None:
 
 
 def store_interaction_ref(event_key: str, interaction_token: str, app_id: str) -> None:
-    """Persist the Edit-button interaction token and app ID for webhook-based message edits."""
+    """Persist the Edit-button interaction token and app ID for webhook edits."""
     _table().update_item(
         Key={"event_key": event_key},
         UpdateExpression="SET interaction_token = :t, app_id = :a",
@@ -125,7 +127,9 @@ def _clear_user_from_rsvps(event: dict, user_id: str) -> None:
         event[a] = users
 
 
-def set_rsvp(event_key: str, user_id: str, action: str, display_name: str | None = None) -> dict:
+def set_rsvp(
+    event_key: str, user_id: str, action: str, display_name: str | None = None
+) -> dict:
     """
     Set a user's RSVP to a specific action without toggling.
 
@@ -151,7 +155,7 @@ def set_rsvp(event_key: str, user_id: str, action: str, display_name: str | None
 
 
 def remove_rsvp(event_key: str, user_id: str) -> dict:
-    """Remove a user from all RSVP lists and the goalie slot. Returns the updated event item."""
+    """Remove a user from all RSVP lists and the goalie slot. Returns the event."""
     event = get_event(event_key)
     if event is None:
         logger.warning("Event not found: %s", event_key)
@@ -207,7 +211,9 @@ def set_goalie(event_key: str, user_id: str, display_name: str | None = None) ->
     return event
 
 
-def update_rsvp(event_key: str, user_id: str, action: str, display_name: str | None = None) -> dict:
+def update_rsvp(
+    event_key: str, user_id: str, action: str, display_name: str | None = None
+) -> dict:
     """
     Toggle a user's RSVP for an event.
 

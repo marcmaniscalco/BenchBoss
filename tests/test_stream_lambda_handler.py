@@ -15,9 +15,7 @@ def test_records_are_forwarded_with_bot_token():
         result = stream_lambda_handler.stream_lambda_handler(event, context=None)
 
     assert result is None
-    mock_handle.assert_called_once_with(
-        event["Records"], bot_token="test-bot-token"
-    )
+    mock_handle.assert_called_once_with(event["Records"], bot_token="test-bot-token")
 
 
 def test_missing_records_passes_empty_list():

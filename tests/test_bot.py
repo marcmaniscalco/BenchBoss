@@ -6,19 +6,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from nacl.signing import SigningKey
 
-from bench_boss.calendar import CalendarEvent
-
 from bench_boss.bot import (
     APPLICATION_COMMAND,
     CHANNEL_MESSAGE_WITH_SOURCE,
-    DEFERRED_UPDATE_MESSAGE,
     MESSAGE_COMPONENT,
     MODAL,
     MODAL_SUBMIT,
     PING,
     PONG,
     UPDATE_MESSAGE,
-    _delete_channel_message,
     _delete_original_message,
     _fetch_and_store_message_ref,
     _fetch_guild_member,
@@ -29,7 +25,7 @@ from bench_boss.bot import (
     handle_interaction,
     verify_signature,
 )
-
+from bench_boss.calendar import CalendarEvent
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -251,11 +247,17 @@ class TestScheduleInteraction:
         body = {
             "type": APPLICATION_COMMAND,
             "channel_id": "ch1",
-            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+            "data": {
+                "name": "schedule",
+                "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
+            },
         }
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.find_event_in_channel", return_value={"event_key": "existing"}),
+            patch(
+                "bench_boss.bot.find_event_in_channel",
+                return_value={"event_key": "existing"},
+            ),
         ):
             mock_reader.return_value.get_upcoming.return_value = [event]
             result = handle_interaction(body)
@@ -266,7 +268,10 @@ class TestScheduleInteraction:
         event = make_calendar_event("Game Night")
         body = {
             "type": APPLICATION_COMMAND,
-            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+            "data": {
+                "name": "schedule",
+                "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
+            },
         }
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
@@ -282,11 +287,17 @@ class TestScheduleInteraction:
         body = {
             "type": APPLICATION_COMMAND,
             "channel_id": "ch1",
-            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+            "data": {
+                "name": "schedule",
+                "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
+            },
         }
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.find_event_in_channel", side_effect=Exception("DynamoDB down")),
+            patch(
+                "bench_boss.bot.find_event_in_channel",
+                side_effect=Exception("DynamoDB down"),
+            ),
             patch("bench_boss.bot.save_event") as mock_save,
         ):
             mock_reader.return_value.get_upcoming.return_value = [event]
@@ -300,7 +311,9 @@ class TestScheduleInteraction:
             patch("bench_boss.bot.save_event") as mock_save,
         ):
             mock_reader.return_value.get_upcoming.return_value = [event]
-            handle_interaction(make_schedule_body("https://example.com/cal.ics", guild_id="g1"))
+            handle_interaction(
+                make_schedule_body("https://example.com/cal.ics", guild_id="g1")
+            )
 
         mock_save.assert_called_once()
         kwargs = mock_save.call_args[1]
@@ -315,7 +328,10 @@ class TestScheduleInteraction:
             "guild_id": "g1",
             "application_id": "app1",
             "token": "tok1",
-            "data": {"name": "schedule", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+            "data": {
+                "name": "schedule",
+                "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
+            },
         }
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
@@ -453,7 +469,10 @@ class TestRsvpInteraction:
             handle_interaction(
                 {
                     "type": MESSAGE_COMPONENT,
-                    "member": {"roles": ["1085056467763208253"], "user": {"id": "user1", "global_name": "Alice"}},
+                    "member": {
+                        "roles": ["1085056467763208253"],
+                        "user": {"id": "user1", "global_name": "Alice"},
+                    },
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
@@ -465,7 +484,10 @@ class TestRsvpInteraction:
             handle_interaction(
                 {
                     "type": MESSAGE_COMPONENT,
-                    "member": {"roles": ["1085056467763208253"], "user": {"id": "user1", "username": "alice123"}},
+                    "member": {
+                        "roles": ["1085056467763208253"],
+                        "user": {"id": "user1", "username": "alice123"},
+                    },
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
@@ -550,7 +572,6 @@ def make_delete_body(
     }
 
 
-
 class TestDeleteInteraction:
     def test_delete_rejected_for_non_admin(self):
         result = handle_interaction(make_delete_body("key1", permissions="0"))
@@ -577,7 +598,9 @@ class TestDeleteInteraction:
     def test_delete_confirmation_encodes_channel_and_message_in_confirm_id(self):
         result = handle_interaction(make_delete_body("key1"))
         buttons = result["body"]["data"]["components"][0]["components"]
-        confirm_id = next(b["custom_id"] for b in buttons if "delete_confirm" in b["custom_id"])
+        confirm_id = next(
+            b["custom_id"] for b in buttons if "delete_confirm" in b["custom_id"]
+        )
         assert "ch1" in confirm_id
         assert "m1" in confirm_id
 
@@ -651,7 +674,9 @@ class TestDeleteConfirmInteraction:
             patch("bench_boss.bot.delete_event", side_effect=ValueError("not found")),
             patch("bench_boss.bot.requests.delete", return_value=ok_resp) as mock_del,
         ):
-            result = handle_interaction(make_delete_confirm_body("key1"), bot_token="tok")
+            result = handle_interaction(
+                make_delete_confirm_body("key1"), bot_token="tok"
+            )
         assert result["body"]["type"] == UPDATE_MESSAGE
         mock_del.assert_called_once()
 
@@ -666,7 +691,9 @@ class TestDeleteConfirmInteraction:
             patch("bench_boss.bot.delete_event"),
             patch("bench_boss.bot.requests.delete", side_effect=Exception("SSL EOF")),
         ):
-            result = handle_interaction(make_delete_confirm_body("key1"), bot_token="tok")
+            result = handle_interaction(
+                make_delete_confirm_body("key1"), bot_token="tok"
+            )
         assert result["statusCode"] == 200
         assert result["body"]["type"] == UPDATE_MESSAGE
 
@@ -706,35 +733,45 @@ class TestUpdateChannelMessage:
 
     def test_uses_channel_api_when_bot_token_present(self):
         event = self._make_event(interaction_token="itoken", app_id="app1")
-        with patch("bench_boss.bot.requests.patch", return_value=self._ok_resp()) as mock_patch:
+        with patch(
+            "bench_boss.bot.requests.patch", return_value=self._ok_resp()
+        ) as mock_patch:
             _update_channel_message(event, "tok")
         url = mock_patch.call_args[0][0]
         assert "channels/ch1/messages/m1" in url
 
     def test_channel_api_used_even_when_interaction_token_present(self):
         event = self._make_event(interaction_token="itoken", app_id="app1")
-        with patch("bench_boss.bot.requests.patch", return_value=self._ok_resp()) as mock_patch:
+        with patch(
+            "bench_boss.bot.requests.patch", return_value=self._ok_resp()
+        ) as mock_patch:
             _update_channel_message(event, "tok")
         headers = mock_patch.call_args[1]["headers"]
         assert "Authorization" in headers
 
     def test_falls_back_to_webhook_when_no_bot_token(self):
         event = self._make_event(interaction_token="itoken", app_id="app1")
-        with patch("bench_boss.bot.requests.patch", return_value=self._ok_resp()) as mock_patch:
+        with patch(
+            "bench_boss.bot.requests.patch", return_value=self._ok_resp()
+        ) as mock_patch:
             _update_channel_message(event, "")
         url = mock_patch.call_args[0][0]
         assert "webhooks/app1/itoken/messages/m1" in url
 
     def test_channel_api_uses_bot_token_in_auth_header(self):
         event = self._make_event()
-        with patch("bench_boss.bot.requests.patch", return_value=self._ok_resp()) as mock_patch:
+        with patch(
+            "bench_boss.bot.requests.patch", return_value=self._ok_resp()
+        ) as mock_patch:
             _update_channel_message(event, "secret-tok")
         headers = mock_patch.call_args[1]["headers"]
         assert headers["Authorization"] == "Bot secret-tok"
 
     def test_patch_body_contains_embeds_and_components(self):
         event = self._make_event()
-        with patch("bench_boss.bot.requests.patch", return_value=self._ok_resp()) as mock_patch:
+        with patch(
+            "bench_boss.bot.requests.patch", return_value=self._ok_resp()
+        ) as mock_patch:
             _update_channel_message(event, "tok")
         body = mock_patch.call_args[1]["json"]
         assert "embeds" in body
@@ -806,7 +843,9 @@ class TestFetchAndStoreMessageRef:
     def test_fetches_correct_webhook_url(self):
         with (
             patch("bench_boss.bot.time.sleep"),
-            patch("bench_boss.bot.requests.get", return_value=self._mock_get()) as mock_get,
+            patch(
+                "bench_boss.bot.requests.get", return_value=self._mock_get()
+            ) as mock_get,
             patch("bench_boss.bot.store_message_ref"),
         ):
             _fetch_and_store_message_ref("app1", "tok1", "key1")
@@ -867,8 +906,13 @@ class TestHandleInteractionEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-def make_add_rsvp_body(event_key: str, channel_id: str = "ch1", message_id: str = "m1",
-                       token: str = "tok1", app_id: str = "app1") -> dict:
+def make_add_rsvp_body(
+    event_key: str,
+    channel_id: str = "ch1",
+    message_id: str = "m1",
+    token: str = "tok1",
+    app_id: str = "app1",
+) -> dict:
     return {
         "type": MESSAGE_COMPONENT,
         "channel_id": channel_id,
@@ -901,7 +945,9 @@ class TestAddRsvpButton:
             patch("bench_boss.bot.store_message_ref") as mock_msg,
             patch("bench_boss.bot.store_interaction_ref"),
         ):
-            handle_interaction(make_add_rsvp_body("key1", channel_id="ch42", message_id="msg99"))
+            handle_interaction(
+                make_add_rsvp_body("key1", channel_id="ch42", message_id="msg99")
+            )
         mock_msg.assert_called_once_with("key1", "ch42", "msg99")
 
     def test_stores_interaction_ref(self):
@@ -909,7 +955,9 @@ class TestAddRsvpButton:
             patch("bench_boss.bot.store_message_ref"),
             patch("bench_boss.bot.store_interaction_ref") as mock_iref,
         ):
-            handle_interaction(make_add_rsvp_body("key1", token="mytoken", app_id="myapp"))
+            handle_interaction(
+                make_add_rsvp_body("key1", token="mytoken", app_id="myapp")
+            )
         mock_iref.assert_called_once_with("key1", "mytoken", "myapp")
 
 
@@ -919,7 +967,10 @@ class TestRemoveRsvpButton:
             patch("bench_boss.bot.store_message_ref"),
             patch("bench_boss.bot.store_interaction_ref"),
         ):
-            body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "remove_rsvp:key1"}}
+            body = {
+                "type": MESSAGE_COMPONENT,
+                "data": {"custom_id": "remove_rsvp:key1"},
+            }
             result = handle_interaction(body)
         assert result["body"]["type"] == MODAL
 
@@ -928,7 +979,10 @@ class TestRemoveRsvpButton:
             patch("bench_boss.bot.store_message_ref"),
             patch("bench_boss.bot.store_interaction_ref"),
         ):
-            body = {"type": MESSAGE_COMPONENT, "data": {"custom_id": "remove_rsvp:ev99"}}
+            body = {
+                "type": MESSAGE_COMPONENT,
+                "data": {"custom_id": "remove_rsvp:ev99"},
+            }
             result = handle_interaction(body)
         assert "ev99" in result["body"]["data"]["custom_id"]
 
@@ -1010,7 +1064,9 @@ class TestGoalieRsvpButton:
         assert "<@other_user>" in result["body"]["data"]["content"]
 
     def test_error_message_uses_display_name_when_available(self):
-        event = make_stored_event(goalie=["other_user"], member_names={"other_user": "Alice"})
+        event = make_stored_event(
+            goalie=["other_user"], member_names={"other_user": "Alice"}
+        )
         with patch("bench_boss.bot.get_event", return_value=event):
             result = handle_interaction(self._body(user_id="user1"))
         assert "Alice" in result["body"]["data"]["content"]
@@ -1026,13 +1082,18 @@ class TestGoalieRsvpButton:
 # ---------------------------------------------------------------------------
 
 
-def make_rsvp_edit_submit(modal_type: str, event_key: str, user: str, action: str = "") -> dict:
+def make_rsvp_edit_submit(
+    modal_type: str, event_key: str, user: str, action: str = ""
+) -> dict:
     components = [
         {"type": 1, "components": [{"type": 4, "custom_id": "user", "value": user}]},
     ]
     if action:
         components.append(
-            {"type": 1, "components": [{"type": 4, "custom_id": "action", "value": action}]}
+            {
+                "type": 1,
+                "components": [{"type": 4, "custom_id": "action", "value": action}],
+            }
         )
     return {
         "type": MODAL_SUBMIT,
@@ -1046,7 +1107,12 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "123456789", "accepted"
+                ),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "123456789", "accepted", None)
 
     def test_add_accepts_mention_format(self):
@@ -1054,7 +1120,12 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "<@123456789>", "declined"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "<@123456789>", "declined"
+                ),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "123456789", "declined", None)
 
     def test_remove_calls_remove_rsvp(self):
@@ -1062,7 +1133,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.remove_rsvp") as mock_remove,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"),
+                bot_token="tok",
+            )
         mock_remove.assert_called_once_with("key1", "123456789")
 
     def test_add_success_returns_ephemeral_confirmation(self):
@@ -1070,7 +1144,12 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp"),
             patch("bench_boss.bot._update_channel_message"),
         ):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "123456789", "accepted"
+                ),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "123456789" in result["body"]["data"]["content"]
         assert "@" not in result["body"]["data"]["content"]
@@ -1080,7 +1159,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.remove_rsvp"),
             patch("bench_boss.bot._update_channel_message"),
         ):
-            result = handle_interaction(make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "123456789" in result["body"]["data"]["content"]
         assert "@" not in result["body"]["data"]["content"]
@@ -1096,7 +1178,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "johndoe", "accepted"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "johndoe", "accepted"),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "999", "accepted", None)
 
     def test_username_not_found_in_guild_returns_error(self):
@@ -1108,13 +1193,19 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.get_event", return_value=event),
             patch("bench_boss.bot.requests.get", return_value=mock_get_resp),
         ):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "nobody", "accepted"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "nobody", "accepted"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "Could not find" in result["body"]["data"]["content"]
 
     def test_no_guild_id_in_event_returns_error_for_username(self):
         with patch("bench_boss.bot.get_event", return_value=make_stored_event()):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "johndoe", "accepted"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "johndoe", "accepted"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "Could not find" in result["body"]["data"]["content"]
 
@@ -1123,7 +1214,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "a"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "a"),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "123456789", "accepted", None)
 
     def test_single_letter_d_maps_to_declined(self):
@@ -1131,7 +1225,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "d"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "d"),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "123456789", "declined", None)
 
     def test_single_letter_t_maps_to_tentative(self):
@@ -1139,12 +1236,18 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "t"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "t"),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "123456789", "tentative", None)
 
     def test_invalid_action_returns_ephemeral_error(self):
         with patch("bench_boss.bot.set_rsvp"):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "bad"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "bad"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "Invalid RSVP status" in result["body"]["data"]["content"]
         assert "goalie" in result["body"]["data"]["content"]
@@ -1156,7 +1259,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_goalie", return_value=event) as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "g"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "g"),
+                bot_token="tok",
+            )
         mock_set.assert_called_once_with("key1", "123456789", None)
 
     def test_add_goalie_sets_goalie_when_slot_empty(self):
@@ -1166,20 +1272,29 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_goalie", return_value=event) as mock_set,
             patch("bench_boss.bot._update_channel_message"),
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"),
+                bot_token="tok",
+            )
         mock_set.assert_called_once()
 
     def test_add_goalie_returns_error_when_user_already_goalie(self):
         event = make_stored_event(goalie=["123456789"])
         with patch("bench_boss.bot.get_event", return_value=event):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "already the goalie" in result["body"]["data"]["content"]
 
     def test_add_goalie_returns_error_when_someone_else_is_goalie(self):
         event = make_stored_event(goalie=["999999999"])
         with patch("bench_boss.bot.get_event", return_value=event):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "Remove them first" in result["body"]["data"]["content"]
 
@@ -1190,12 +1305,20 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_goalie", return_value=event),
             patch("bench_boss.bot._update_channel_message") as mock_update,
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"),
+                bot_token="tok",
+            )
         mock_update.assert_called_once_with(event, "tok")
 
     def test_event_not_found_returns_ephemeral_error(self):
         with patch("bench_boss.bot.set_rsvp", side_effect=ValueError):
-            result = handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted"), bot_token="tok")
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "123456789", "accepted"
+                ),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "not found" in result["body"]["data"]["content"].lower()
 
@@ -1205,12 +1328,23 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp", return_value=event),
             patch("bench_boss.bot._update_channel_message") as mock_update,
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "123456789", "accepted"
+                ),
+                bot_token="tok",
+            )
         mock_update.assert_called_once_with(event, "tok")
 
     def test_remove_user_not_in_list_returns_ephemeral_error(self):
-        with patch("bench_boss.bot.remove_rsvp", side_effect=ValueError("User is not in the RSVP list.")):
-            result = handle_interaction(make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"), bot_token="tok")
+        with patch(
+            "bench_boss.bot.remove_rsvp",
+            side_effect=ValueError("User is not in the RSVP list."),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"),
+                bot_token="tok",
+            )
         assert result["body"]["data"]["flags"] == 64
         assert "not in the RSVP list" in result["body"]["data"]["content"]
 
@@ -1220,7 +1354,10 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.remove_rsvp", return_value=event),
             patch("bench_boss.bot._update_channel_message") as mock_update,
         ):
-            handle_interaction(make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"), bot_token="tok")
+            handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "123456789"),
+                bot_token="tok",
+            )
         mock_update.assert_called_once_with(event, "tok")
 
     def test_add_skips_channel_update_when_no_token(self):
@@ -1229,11 +1366,12 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot.set_rsvp", return_value=event),
             patch("bench_boss.bot._update_channel_message") as mock_update,
         ):
-            handle_interaction(make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted"))
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            )
         mock_update.assert_not_called()
 
     def test_display_name_fetched_from_guild_when_guild_id_in_body(self):
-        event = make_stored_event()
         member_resp = MagicMock()
         member_resp.ok = True
         member_resp.json.return_value = {
@@ -1246,7 +1384,9 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot._update_channel_message"),
             patch("bench_boss.bot.requests.get", return_value=member_resp),
         ):
-            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body = make_rsvp_edit_submit(
+                "add_rsvp_modal", "key1", "123456789", "accepted"
+            )
             body["guild_id"] = "guild1"
             handle_interaction(body, bot_token="tok")
         mock_set.assert_called_once_with("key1", "123456789", "accepted", "Server Nick")
@@ -1264,7 +1404,9 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot._update_channel_message"),
             patch("bench_boss.bot.requests.get", return_value=member_resp),
         ):
-            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body = make_rsvp_edit_submit(
+                "add_rsvp_modal", "key1", "123456789", "accepted"
+            )
             body["guild_id"] = "guild1"
             handle_interaction(body, bot_token="tok")
         mock_set.assert_called_once_with("key1", "123456789", "accepted", "Alice")
@@ -1272,13 +1414,19 @@ class TestRsvpEditModalSubmit:
     def test_confirmation_uses_display_name_not_at_symbol(self):
         member_resp = MagicMock()
         member_resp.ok = True
-        member_resp.json.return_value = {"nick": "Server Nick", "roles": ["1085056467763208253"], "user": {}}
+        member_resp.json.return_value = {
+            "nick": "Server Nick",
+            "roles": ["1085056467763208253"],
+            "user": {},
+        }
         with (
             patch("bench_boss.bot.set_rsvp"),
             patch("bench_boss.bot._update_channel_message"),
             patch("bench_boss.bot.requests.get", return_value=member_resp),
         ):
-            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body = make_rsvp_edit_submit(
+                "add_rsvp_modal", "key1", "123456789", "accepted"
+            )
             body["guild_id"] = "guild1"
             result = handle_interaction(body, bot_token="tok")
         content = result["body"]["data"]["content"]
@@ -1288,13 +1436,19 @@ class TestRsvpEditModalSubmit:
     def test_modal_name_suffixed_with_star_when_no_fulltime_role(self):
         member_resp = MagicMock()
         member_resp.ok = True
-        member_resp.json.return_value = {"nick": "Jane", "roles": [], "user": {"global_name": "Jane"}}
+        member_resp.json.return_value = {
+            "nick": "Jane",
+            "roles": [],
+            "user": {"global_name": "Jane"},
+        }
         with (
             patch("bench_boss.bot.set_rsvp") as mock_set,
             patch("bench_boss.bot._update_channel_message"),
             patch("bench_boss.bot.requests.get", return_value=member_resp),
         ):
-            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body = make_rsvp_edit_submit(
+                "add_rsvp_modal", "key1", "123456789", "accepted"
+            )
             body["guild_id"] = "guild1"
             handle_interaction(body, bot_token="tok")
         mock_set.assert_called_once_with("key1", "123456789", "accepted", "Jane*")
@@ -1312,13 +1466,18 @@ class TestRsvpEditModalSubmit:
             patch("bench_boss.bot._update_channel_message"),
             patch("bench_boss.bot.requests.get", return_value=member_resp),
         ):
-            body = make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "accepted")
+            body = make_rsvp_edit_submit(
+                "add_rsvp_modal", "key1", "123456789", "accepted"
+            )
             body["guild_id"] = "guild1"
             handle_interaction(body, bot_token="tok")
         mock_set.assert_called_once_with("key1", "123456789", "accepted", "Jane")
 
     def test_unhandled_modal_submit_returns_400(self):
-        body = {"type": MODAL_SUBMIT, "data": {"custom_id": "unknown_modal:key1", "components": []}}
+        body = {
+            "type": MODAL_SUBMIT,
+            "data": {"custom_id": "unknown_modal:key1", "components": []},
+        }
         result = handle_interaction(body)
         assert result["statusCode"] == 400
 
@@ -1342,21 +1501,33 @@ class TestFetchMemberDisplayName:
         return resp
 
     def test_returns_server_nick_when_present(self):
-        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp(
-            {"nick": "Server Nick", "user": {"global_name": "Alice", "username": "alice"}}
-        )):
+        with patch(
+            "bench_boss.bot.requests.get",
+            return_value=self._ok_resp(
+                {
+                    "nick": "Server Nick",
+                    "user": {"global_name": "Alice", "username": "alice"},
+                }
+            ),
+        ):
             assert _fetch_member_display_name("g1", "u1", "tok") == "Server Nick"
 
     def test_falls_back_to_global_name_when_no_nick(self):
-        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp(
-            {"nick": None, "user": {"global_name": "Alice", "username": "alice"}}
-        )):
+        with patch(
+            "bench_boss.bot.requests.get",
+            return_value=self._ok_resp(
+                {"nick": None, "user": {"global_name": "Alice", "username": "alice"}}
+            ),
+        ):
             assert _fetch_member_display_name("g1", "u1", "tok") == "Alice"
 
     def test_falls_back_to_username_when_no_nick_or_global_name(self):
-        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp(
-            {"nick": None, "user": {"global_name": None, "username": "alice"}}
-        )):
+        with patch(
+            "bench_boss.bot.requests.get",
+            return_value=self._ok_resp(
+                {"nick": None, "user": {"global_name": None, "username": "alice"}}
+            ),
+        ):
             assert _fetch_member_display_name("g1", "u1", "tok") == "alice"
 
     def test_returns_none_on_api_failure(self):
@@ -1364,7 +1535,9 @@ class TestFetchMemberDisplayName:
             assert _fetch_member_display_name("g1", "u1", "tok") is None
 
     def test_calls_correct_guild_member_url(self):
-        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp({"user": {}})) as mock_get:
+        with patch(
+            "bench_boss.bot.requests.get", return_value=self._ok_resp({"user": {}})
+        ) as mock_get:
             _fetch_member_display_name("guild1", "user1", "tok")
         url = mock_get.call_args[0][0]
         assert "guilds/guild1/members/user1" in url
@@ -1389,8 +1562,14 @@ class TestFetchGuildMember:
         return resp
 
     def test_returns_member_dict_on_success(self):
-        member_data = {"nick": "Nick", "roles": ["1085056467763208253"], "user": {"id": "u1"}}
-        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp(member_data)):
+        member_data = {
+            "nick": "Nick",
+            "roles": ["1085056467763208253"],
+            "user": {"id": "u1"},
+        }
+        with patch(
+            "bench_boss.bot.requests.get", return_value=self._ok_resp(member_data)
+        ):
             result = _fetch_guild_member("g1", "u1", "tok")
         assert result == member_data
 
@@ -1399,7 +1578,9 @@ class TestFetchGuildMember:
             assert _fetch_guild_member("g1", "u1", "tok") is None
 
     def test_calls_correct_url(self):
-        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp({"user": {}})) as mock_get:
+        with patch(
+            "bench_boss.bot.requests.get", return_value=self._ok_resp({"user": {}})
+        ) as mock_get:
             _fetch_guild_member("guild1", "user1", "tok")
         url = mock_get.call_args[0][0]
         assert "guilds/guild1/members/user1" in url
@@ -1437,7 +1618,9 @@ class TestEventsInteraction:
 
     def test_success_returns_ephemeral_and_starts_thread(self):
         with patch("bench_boss.bot.threading.Thread") as mock_thread:
-            result = handle_interaction(make_events_body("https://example.com/cal.ics"), bot_token="tok")
+            result = handle_interaction(
+                make_events_body("https://example.com/cal.ics"), bot_token="tok"
+            )
         assert result["statusCode"] == 200
         assert result["body"]["data"]["flags"] == 64
         assert "DM" in result["body"]["data"]["content"]
@@ -1450,7 +1633,10 @@ class TestEventsInteraction:
         body = {
             "type": APPLICATION_COMMAND,
             "user": {"id": "user99"},
-            "data": {"name": "events", "options": [{"name": "url", "value": "https://example.com/cal.ics"}]},
+            "data": {
+                "name": "events",
+                "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
+            },
         }
         with patch("bench_boss.bot.threading.Thread") as mock_thread:
             handle_interaction(body, bot_token="tok")
@@ -1474,7 +1660,9 @@ class TestSendDmEvents:
         dm_resp, msg_resp = self._make_mock_requests([ev])
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]) as mock_post,
+            patch(
+                "bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]
+            ) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             _send_dm_events("https://example.com/cal.ics", "user1", "tok")
@@ -1490,7 +1678,9 @@ class TestSendDmEvents:
         dm_resp, msg_resp = self._make_mock_requests([])
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]) as mock_post,
+            patch(
+                "bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]
+            ) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = []
             _send_dm_events("https://example.com/cal.ics", "user1", "tok")
@@ -1521,14 +1711,18 @@ class TestSendDmEvents:
             mock_reader.return_value.get_remaining.return_value = [ev]
             _send_dm_events("https://example.com/cal.ics", "user1", "tok")
 
-        assert mock_post.call_count == 1  # Only the DM channel creation, no message sent
+        assert (
+            mock_post.call_count == 1
+        )  # Only the DM channel creation, no message sent
 
     def test_long_event_list_truncated_to_2000_chars(self):
         events = [make_calendar_event(f"Event {'X' * 100} {i}") for i in range(30)]
         dm_resp, msg_resp = self._make_mock_requests(events)
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]) as mock_post,
+            patch(
+                "bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]
+            ) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = events
             _send_dm_events("https://example.com/cal.ics", "user1", "tok")
@@ -1540,14 +1734,22 @@ class TestSendDmEvents:
 class TestFormatEventLine:
     def test_datetime_event(self):
         start = datetime(2026, 3, 28, 10, 0, tzinfo=UTC)
-        ev = CalendarEvent(summary="Standup", start=start, end=None, location=None, description=None)
+        ev = CalendarEvent(
+            summary="Standup", start=start, end=None, location=None, description=None
+        )
         line = _format_event_line(ev)
         assert "Standup" in line
         assert "Mar" in line
         assert "28" in line
 
     def test_all_day_event(self):
-        ev = CalendarEvent(summary="All Day", start=date(2026, 4, 1), end=None, location=None, description=None)
+        ev = CalendarEvent(
+            summary="All Day",
+            start=date(2026, 4, 1),
+            end=None,
+            location=None,
+            description=None,
+        )
         line = _format_event_line(ev)
         assert "All day" in line
         assert "All Day" in line

@@ -97,7 +97,15 @@ class TestSaveEvent:
         assert "guild_id" not in item
 
     def test_stores_webcal_url_when_provided(self, mock_table):
-        save_event("key1", "My Event", START, None, None, None, webcal_url="https://example.com/cal.ics")
+        save_event(
+            "key1",
+            "My Event",
+            START,
+            None,
+            None,
+            None,
+            webcal_url="https://example.com/cal.ics",
+        )
         item = mock_table.put_item.call_args[1]["Item"]
         assert item["webcal_url"] == "https://example.com/cal.ics"
 
@@ -137,7 +145,9 @@ class TestSaveEvent:
 
 class TestFindEventInChannel:
     def test_returns_item_when_match_found(self, mock_table):
-        mock_table.scan.return_value = {"Items": [{"event_key": "key1", "name": "My Event"}]}
+        mock_table.scan.return_value = {
+            "Items": [{"event_key": "key1", "name": "My Event"}]
+        }
         result = find_event_in_channel("ch1", "My Event", START)
         assert result["event_key"] == "key1"
 
@@ -263,7 +273,9 @@ class TestSetRsvp:
     def test_user_appears_in_only_one_action(self, mock_table):
         mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
         result = set_rsvp("key1", "user1", "declined")
-        counts = sum("user1" in result.get(a, []) for a in ("accepted", "declined", "tentative"))
+        counts = sum(
+            "user1" in result.get(a, []) for a in ("accepted", "declined", "tentative")
+        )
         assert counts == 1
 
     def test_raises_when_event_not_found(self, mock_table):
@@ -336,9 +348,9 @@ class TestRemoveRsvp:
         mock_table.put_item.assert_called_once()
 
     def test_removes_display_name_on_removal(self, mock_table):
-        mock_table.get_item.return_value = {"Item": _make_event(
-            accepted=["user1"], member_names={"user1": "Alice"}
-        )}
+        mock_table.get_item.return_value = {
+            "Item": _make_event(accepted=["user1"], member_names={"user1": "Alice"})
+        }
         result = remove_rsvp("key1", "user1")
         assert "user1" not in result["member_names"]
 
@@ -369,8 +381,7 @@ class TestUpdateRsvp:
         mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
         result = update_rsvp("key1", "user1", "tentative")
         counts = sum(
-            "user1" in result.get(a, [])
-            for a in ("accepted", "declined", "tentative")
+            "user1" in result.get(a, []) for a in ("accepted", "declined", "tentative")
         )
         assert counts == 1
 
@@ -396,9 +407,9 @@ class TestUpdateRsvp:
         assert result["member_names"]["user1"] == "Alice"
 
     def test_removes_display_name_on_toggle_off(self, mock_table):
-        mock_table.get_item.return_value = {"Item": _make_event(
-            accepted=["user1"], member_names={"user1": "Alice"}
-        )}
+        mock_table.get_item.return_value = {
+            "Item": _make_event(accepted=["user1"], member_names={"user1": "Alice"})
+        }
         result = update_rsvp("key1", "user1", "accepted")
         assert "user1" not in result["member_names"]
 
@@ -442,16 +453,16 @@ class TestSetGoalie:
         assert result["member_names"]["user1"] == "Alice"
 
     def test_removes_display_name_on_toggle_off(self, mock_table):
-        mock_table.get_item.return_value = {"Item": _make_event(
-            goalie=["user1"], member_names={"user1": "Alice"}
-        )}
+        mock_table.get_item.return_value = {
+            "Item": _make_event(goalie=["user1"], member_names={"user1": "Alice"})
+        }
         result = set_goalie("key1", "user1")
         assert "user1" not in result["member_names"]
 
     def test_removes_old_goalie_display_name_on_replace(self, mock_table):
-        mock_table.get_item.return_value = {"Item": _make_event(
-            goalie=["user1"], member_names={"user1": "Alice"}
-        )}
+        mock_table.get_item.return_value = {
+            "Item": _make_event(goalie=["user1"], member_names={"user1": "Alice"})
+        }
         result = set_goalie("key1", "user2", display_name="Bob")
         assert "user1" not in result["member_names"]
         assert result["member_names"]["user2"] == "Bob"

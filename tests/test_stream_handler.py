@@ -27,7 +27,10 @@ def make_remove_record(
     }
     if identity_type:
         # Use capital keys to match the actual DynamoDB Streams API response format
-        record["userIdentity"] = {"Type": identity_type, "PrincipalId": "dynamodb.amazonaws.com"}
+        record["userIdentity"] = {
+            "Type": identity_type,
+            "PrincipalId": "dynamodb.amazonaws.com",
+        }
     if channel_id:
         record["dynamodb"]["OldImage"]["channel_id"] = {"S": channel_id}
     if message_id:
@@ -40,7 +43,10 @@ def make_remove_record(
 
 
 def make_insert_record():
-    return {"eventName": "INSERT", "dynamodb": {"NewImage": {"event_key": {"S": "key1"}}}}
+    return {
+        "eventName": "INSERT",
+        "dynamodb": {"NewImage": {"event_key": {"S": "key1"}}},
+    }
 
 
 def make_calendar_event(summary="Game Night", days_ahead=1):
@@ -76,8 +82,10 @@ def mock_fail_response(status=404, text="Not Found"):
 
 class TestIgnoredRecords:
     def test_insert_event_is_ignored(self):
-        with patch("bench_boss.stream_handler.requests.post") as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete") as mock_del:
+        with (
+            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch("bench_boss.stream_handler.requests.delete") as mock_del,
+        ):
             handle_stream_records([make_insert_record()], bot_token="tok")
         mock_post.assert_not_called()
         mock_del.assert_not_called()
@@ -91,8 +99,13 @@ class TestIgnoredRecords:
     def test_lowercase_type_key_is_accepted(self):
         """Fallback: accept lowercase 'type' key in case API ever returns it."""
         record = make_remove_record(webcal_url=None)
-        record["userIdentity"] = {"type": "Service", "principalId": "dynamodb.amazonaws.com"}
-        with patch("bench_boss.stream_handler.requests.delete", return_value=MagicMock(ok=True)) as mock_del:
+        record["userIdentity"] = {
+            "type": "Service",
+            "principalId": "dynamodb.amazonaws.com",
+        }
+        with patch(
+            "bench_boss.stream_handler.requests.delete", return_value=MagicMock(ok=True)
+        ) as mock_del:
             handle_stream_records([record], bot_token="tok")
         mock_del.assert_called_once()
 
@@ -105,16 +118,20 @@ class TestIgnoredRecords:
 
     def test_missing_channel_id_skips_all_discord_calls(self):
         record = make_remove_record(channel_id=None)
-        with patch("bench_boss.stream_handler.requests.post") as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete") as mock_del:
+        with (
+            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch("bench_boss.stream_handler.requests.delete") as mock_del,
+        ):
             handle_stream_records([record], bot_token="tok")
         mock_post.assert_not_called()
         mock_del.assert_not_called()
 
     def test_missing_message_id_skips_all_discord_calls(self):
         record = make_remove_record(message_id=None)
-        with patch("bench_boss.stream_handler.requests.post") as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete") as mock_del:
+        with (
+            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch("bench_boss.stream_handler.requests.delete") as mock_del,
+        ):
             handle_stream_records([record], bot_token="tok")
         mock_post.assert_not_called()
         mock_del.assert_not_called()
@@ -136,11 +153,17 @@ class TestNextEventPosted:
         post_resp = mock_ok_response({"id": "new_msg_id"})
         del_resp = mock_ok_response()
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.save_event"), \
-             patch("bench_boss.stream_handler.store_message_ref"), \
-             patch("bench_boss.stream_handler.requests.post", return_value=post_resp) as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete", return_value=del_resp) as mock_del:
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event"),
+            patch("bench_boss.stream_handler.store_message_ref"),
+            patch(
+                "bench_boss.stream_handler.requests.post", return_value=post_resp
+            ) as mock_post,
+            patch(
+                "bench_boss.stream_handler.requests.delete", return_value=del_resp
+            ) as mock_del,
+        ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -155,11 +178,18 @@ class TestNextEventPosted:
         ev = make_calendar_event()
         post_resp = mock_ok_response({"id": "new_msg_id"})
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.save_event"), \
-             patch("bench_boss.stream_handler.store_message_ref"), \
-             patch("bench_boss.stream_handler.requests.post", return_value=post_resp) as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()):
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event"),
+            patch("bench_boss.stream_handler.store_message_ref"),
+            patch(
+                "bench_boss.stream_handler.requests.post", return_value=post_resp
+            ) as mock_post,
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -169,11 +199,16 @@ class TestNextEventPosted:
         ev = make_calendar_event()
         post_resp = mock_ok_response({"id": "new_msg_id"})
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.save_event") as mock_save, \
-             patch("bench_boss.stream_handler.store_message_ref"), \
-             patch("bench_boss.stream_handler.requests.post", return_value=post_resp), \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()):
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event") as mock_save,
+            patch("bench_boss.stream_handler.store_message_ref"),
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -187,11 +222,16 @@ class TestNextEventPosted:
         ev = make_calendar_event()
         post_resp = mock_ok_response({"id": "new_msg_999"})
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.save_event"), \
-             patch("bench_boss.stream_handler.store_message_ref") as mock_store, \
-             patch("bench_boss.stream_handler.requests.post", return_value=post_resp), \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()):
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event"),
+            patch("bench_boss.stream_handler.store_message_ref") as mock_store,
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -203,10 +243,18 @@ class TestNextEventPosted:
     def test_dynamo_save_failure_skips_post_but_still_deletes(self):
         ev = make_calendar_event()
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.save_event", side_effect=Exception("DynamoDB down")), \
-             patch("bench_boss.stream_handler.requests.post") as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()) as mock_del:
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.stream_handler.save_event",
+                side_effect=Exception("DynamoDB down"),
+            ),
+            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ) as mock_del,
+        ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -216,11 +264,19 @@ class TestNextEventPosted:
     def test_discord_post_failure_still_deletes_old_message(self):
         ev = make_calendar_event()
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.save_event"), \
-             patch("bench_boss.stream_handler.store_message_ref"), \
-             patch("bench_boss.stream_handler.requests.post", return_value=mock_fail_response()), \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()) as mock_del:
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event"),
+            patch("bench_boss.stream_handler.store_message_ref"),
+            patch(
+                "bench_boss.stream_handler.requests.post",
+                return_value=mock_fail_response(),
+            ),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ) as mock_del,
+        ):
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -236,9 +292,16 @@ class TestNoMoreEvents:
     def test_posts_no_more_events_embed(self):
         post_resp = mock_ok_response()
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.requests.post", return_value=post_resp) as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()):
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.stream_handler.requests.post", return_value=post_resp
+            ) as mock_post,
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
             mock_reader.return_value.get_remaining.return_value = []
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -247,9 +310,17 @@ class TestNoMoreEvents:
         assert payload["embeds"][0]["title"] == "No More Events"
 
     def test_no_more_events_still_deletes_old_message(self):
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.requests.post", return_value=mock_ok_response()), \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()) as mock_del:
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.stream_handler.requests.post",
+                return_value=mock_ok_response(),
+            ),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ) as mock_del,
+        ):
             mock_reader.return_value.get_remaining.return_value = []
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -258,18 +329,28 @@ class TestNoMoreEvents:
     def test_no_webcal_url_skips_calendar_fetch_and_just_deletes(self):
         record = make_remove_record(webcal_url=None)
 
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.requests.post") as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()):
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
             handle_stream_records([record], bot_token="tok")
 
         mock_reader.assert_not_called()
         mock_post.assert_not_called()
 
     def test_calendar_fetch_failure_still_deletes_old_message(self):
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.requests.post") as mock_post, \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()) as mock_del:
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ) as mock_del,
+        ):
             mock_reader.return_value.get_remaining.side_effect = Exception("timeout")
             handle_stream_records([make_remove_record()], bot_token="tok")
 
@@ -277,11 +358,21 @@ class TestNoMoreEvents:
         mock_del.assert_called_once()
 
     def test_discord_delete_failure_does_not_raise(self):
-        with patch("bench_boss.stream_handler.WebCalReader") as mock_reader, \
-             patch("bench_boss.stream_handler.requests.post", return_value=mock_ok_response()), \
-             patch("bench_boss.stream_handler.requests.delete", return_value=mock_fail_response()):
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.stream_handler.requests.post",
+                return_value=mock_ok_response(),
+            ),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_fail_response(),
+            ),
+        ):
             mock_reader.return_value.get_remaining.return_value = []
-            handle_stream_records([make_remove_record()], bot_token="tok")  # must not raise
+            handle_stream_records(
+                [make_remove_record()], bot_token="tok"
+            )  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +383,16 @@ class TestNoMoreEvents:
 class TestBatchProcessing:
     def test_processes_multiple_records(self):
         records = [
-            make_remove_record(event_key=f"key{i}", channel_id=f"ch{i}", message_id=f"msg{i}", webcal_url=None)
+            make_remove_record(
+                event_key=f"key{i}",
+                channel_id=f"ch{i}",
+                message_id=f"msg{i}",
+                webcal_url=None,
+            )
             for i in range(3)
         ]
-        with patch("bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()) as mock_del:
+        with patch(
+            "bench_boss.stream_handler.requests.delete", return_value=mock_ok_response()
+        ) as mock_del:
             handle_stream_records(records, bot_token="tok")
         assert mock_del.call_count == 3
