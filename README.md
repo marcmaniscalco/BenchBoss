@@ -475,7 +475,63 @@ This deploys the `bench-boss-pipeline` stack. The pipeline will start its
 first execution as soon as a commit lands on `main` (or you can manually
 release a change from the console).
 
-### 7.4 Approve a production release
+### 7.4 Connect each Discord app to its Lambda
+
+After **DeployQA** goes green for the first time (and later, after the
+first **DeployProd**), each stack exposes its Lambda Function URL as the
+stack output `InteractionsUrl`. Paste that URL into the matching Discord
+app's **Interactions Endpoint URL** field — once per stage. The URL is
+stable across redeploys, so this is a one-time step per stage.
+
+Fetch the URL via CLI:
+
+```powershell
+# QA
+aws cloudformation describe-stacks `
+  --stack-name bench-boss-qa `
+  --region us-east-1 `
+  --query "Stacks[0].Outputs[?OutputKey=='InteractionsUrl'].OutputValue" `
+  --output text
+
+# Prod
+aws cloudformation describe-stacks `
+  --stack-name bench-boss-prod `
+  --region us-east-1 `
+  --query "Stacks[0].Outputs[?OutputKey=='InteractionsUrl'].OutputValue" `
+  --output text
+```
+
+Or via console: **CloudFormation → bench-boss-qa (or bench-boss-prod) →
+Outputs tab → `InteractionsUrl`**.
+
+Each URL looks like:
+```
+https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.lambda-url.us-east-1.on.aws/
+```
+
+Paste it into:
+**Discord Developer Portal → (QA or Prod) app → General Information →
+Interactions Endpoint URL → Save Changes**
+
+Discord sends a signed PING when you save. If it saves cleanly, signature
+verification works and the bot is wired up. Type `/ping` in the matching
+server to confirm — the bot should reply **Pong!** within a second.
+
+If the save errors with *"interactions endpoint url could not be
+verified"*, the `DiscordPublicKey` in your Secrets Manager secret doesn't
+match the Discord app's public key. Update the secret and trigger a
+redeploy so the Lambda picks up the new env var:
+
+```powershell
+aws secretsmanager update-secret `
+  --secret-id bench-boss/qa `
+  --region us-east-1 `
+  --secret-string '{\"DiscordPublicKey\":\"<qa-public-key>\",\"DiscordToken\":\"<qa-bot-token>\"}'
+```
+
+Then push any commit to `main` to run the pipeline again.
+
+### 7.5 Approve a production release
 
 1. Open the AWS Console → **CodePipeline** → `bench-boss-pipeline`
 2. Wait for **DeployQA** to go green
@@ -487,13 +543,13 @@ If you want to abandon a build instead of promoting it, click **Reject** on
 the approval action — the pipeline run ends, and the next push starts a
 fresh execution.
 
-### 7.5 Cost
+### 7.6 Cost
 
 At low commit volume the pipeline is roughly **$2–3/month** (CodePipeline
 flat fee + a handful of build minutes + two Secrets Manager secrets).
 CodeCommit is free for the first 5 active users.
 
-### 7.6 Tearing it all down
+### 7.7 Tearing it all down
 
 ```powershell
 aws cloudformation delete-stack --stack-name bench-boss-prod --region us-east-1
