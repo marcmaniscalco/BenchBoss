@@ -234,16 +234,31 @@ make cov
 Run this once (and again whenever you add or change commands). Commands are registered as guild (server-specific) commands for instant availability during development.
 
 ```powershell
-make register
+make register      # registers against the prod Discord app (.env)
+make register-qa   # registers against the QA Discord app (.env.qa)
 ```
 
-Values are read automatically from your `.env` file.
+`make register` reads from `.env` (production credentials).
+`make register-qa` reads from `.env.qa`, a separate gitignored file with the
+**QA** Discord app's `DISCORD_TOKEN`, `DISCORD_APP_ID`, and `GUILD_ID`. This
+keeps prod and QA registrations independent — switching between them no
+longer requires editing `.env`.
+
+Create `.env.qa` once with the QA app's values:
+
+```
+DISCORD_TOKEN=your-qa-bot-token
+DISCORD_APP_ID=your-qa-application-id
+GUILD_ID=your-qa-test-server-id
+DISCORD_PUBLIC_KEY=your-qa-public-key
+```
 
 Expected output:
 ```
-Registered 2 command(s):
+Registered 3 command(s) for qa:
   /ping — Check if the bot is alive.
   /schedule — Show upcoming calendar events for the next 7 days.
+  /events — DM you a list of all events from a calendar.
 ```
 
 ---
@@ -341,7 +356,7 @@ When a user RSVPs via any button (accepted / declined / tentative) or is added v
    ```python
    {"name": "hello", "description": "Say hello."}
    ```
-3. Run `make register` again
+3. Run `make register` again (and `make register-qa` if you also use a QA app)
 4. Restart with `make local`
 
 ---
@@ -426,6 +441,9 @@ stacks, with separate Discord apps/tokens supplied per stage from
 Repeat **Part 2** with a new Discord application. Save the QA Public Key,
 Bot Token, and App ID — these are the QA credentials. The production app
 keeps its existing values.
+
+Put the QA values in a `.env.qa` file at the project root (gitignored), then
+register the QA app's slash commands with `make register-qa`. See **3.6**.
 
 ### 7.2 Create the Secrets Manager secrets
 

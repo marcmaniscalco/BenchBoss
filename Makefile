@@ -1,4 +1,4 @@
-.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init local register build deploy pipeline-deploy
+.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy
 
 -include .env
 export
@@ -52,6 +52,9 @@ local:
 
 register:
 	pipenv run python register_commands.py
+
+register-qa:
+	pipenv run python register_commands.py --env qa
 
 # ── AWS deployment (SAM) ──────────────────────────────────────────────────────
 

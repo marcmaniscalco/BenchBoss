@@ -1,18 +1,40 @@
 """
-Registers slash commands with Discord. Run once after creating your bot.
+Registers slash commands with Discord. Run once after creating your bot,
+and again whenever you add or change a command.
 
 Usage:
-    set DISCORD_TOKEN=<your-bot-token>
-    set DISCORD_APP_ID=<your-application-id>
-    python register_commands.py
+    pipenv run python register_commands.py             # reads .env     (prod)
+    pipenv run python register_commands.py --env qa    # reads .env.qa  (qa)
 """
 
+import argparse
 import os
+import sys
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+parser = argparse.ArgumentParser(description="Register slash commands with Discord.")
+parser.add_argument(
+    "--env",
+    choices=["prod", "qa"],
+    default="prod",
+    help="Which env file to load: .env for prod (default), .env.qa for qa.",
+)
+args = parser.parse_args()
+
+env_file = ".env" if args.env == "prod" else ".env.qa"
+if not Path(env_file).is_file():
+    print(
+        f"error: {env_file} not found in current directory. "
+        "Create it with DISCORD_TOKEN, DISCORD_APP_ID, and GUILD_ID values "
+        f"for the {args.env} Discord app.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+load_dotenv(env_file, override=True)
 
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 DISCORD_APP_ID = os.environ["DISCORD_APP_ID"]
@@ -55,6 +77,6 @@ headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
 response = requests.put(url, headers=headers, json=COMMANDS)
 response.raise_for_status()
 
-print(f"Registered {len(response.json())} command(s):")
+print(f"Registered {len(response.json())} command(s) for {args.env}:")
 for cmd in response.json():
     print(f"  /{cmd['name']} — {cmd['description']}")
