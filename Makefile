@@ -1,10 +1,11 @@
-.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init local register build deploy
+.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init local register build deploy pipeline-deploy
 
 -include .env
 export
 
 AWS_REGION ?= us-east-1
 STACK_NAME ?= bench-boss
+PIPELINE_STACK_NAME ?= bench-boss-pipeline
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
@@ -70,3 +71,15 @@ deploy: build
 		--parameter-overrides \
 			DiscordPublicKey=$(DISCORD_PUBLIC_KEY) \
 			DiscordToken=$(DISCORD_TOKEN)
+
+# ── CI/CD pipeline (one-time bootstrap) ───────────────────────────────────────
+
+# Deploy the CodePipeline stack itself. Run once; afterwards every push to
+# `main` triggers the pipeline automatically. Requires the QA and Prod
+# Secrets Manager secrets to exist (see README Part 7).
+pipeline-deploy:
+	aws cloudformation deploy \
+		--template-file infrastructure/pipeline.yaml \
+		--stack-name $(PIPELINE_STACK_NAME) \
+		--region $(AWS_REGION) \
+		--capabilities CAPABILITY_IAM

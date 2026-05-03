@@ -1,0 +1,25 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.13
+    commands:
+      - pip install --upgrade pip pipenv
+      - pipenv install --dev --deploy
+
+  pre_build:
+    commands:
+      - pipenv run ruff check bench_boss/ tests/
+      - pipenv run pytest tests/ -v --cov=bench_boss --cov-report=term-missing
+
+  build:
+    commands:
+      - pipenv requirements > requirements.txt
+      - sam build --template infrastructure/template.yaml
+      - sam package --s3-bucket "${ARTIFACT_BUCKET}" --output-template-file packaged.yaml
+
+artifacts:
+  files:
+    - packaged.yaml
+  discard-paths: yes

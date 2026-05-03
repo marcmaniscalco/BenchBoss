@@ -32,7 +32,9 @@ BenchBoss/
 │   ├── local_server.py         # Flask server for local Discord testing via ngrok
 │   └── create_local_table.py   # One-time script to create the local DynamoDB table
 ├── infrastructure/
-│   └── template.yaml       # SAM template (Lambda + DynamoDB)
+│   ├── template.yaml       # SAM template (Lambda + DynamoDB)
+│   └── pipeline.yaml       # CodePipeline CI/CD stack
+├── buildspec.yml               # CodeBuild instructions for the pipeline
 ├── lambda_function.py          # Interactions Lambda entry point (Function URL)
 ├── stream_lambda_handler.py    # Stream Lambda entry point (DynamoDB Streams)
 ├── register_commands.py        # One-time script to register slash commands with Discord
@@ -396,3 +398,93 @@ make deploy
 ```
 
 SAM diffs the template and code, ships only what changed. Each deploy publishes a new Lambda version; SnapStart re-snapshots automatically when the version is published, so cold starts stay fast.
+
+---
+
+## Part 7 — CI/CD Pipeline (CodePipeline)
+
+For automated builds and deploys, this project ships an AWS-native pipeline
+defined in `infrastructure/pipeline.yaml`. The pipeline is a single
+CloudFormation stack that creates:
+
+- A CodeBuild project that runs `ruff`, `pytest --cov`, and `sam build`/`sam package`
+- A CodePipeline with five stages:
+  1. **Source** — pulls from CodeCommit (`BenchBoss` repo, `main` branch)
+  2. **Build** — runs lint + unit tests, then packages the Lambdas
+  3. **DeployQA** — applies the SAM template as `bench-boss-qa`
+  4. **ApproveProd** — manual approval gate (you click **Approve** in the console)
+  5. **DeployProd** — applies the same template as `bench-boss-prod`
+- An EventBridge rule that triggers the pipeline on every push to `main`
+- An S3 bucket for build artifacts (30-day lifecycle)
+
+QA and Prod deploy to the **same AWS account** but to separate CloudFormation
+stacks, with separate Discord apps/tokens supplied per stage from
+**AWS Secrets Manager**.
+
+### 7.1 Create a separate Discord app for QA
+
+Repeat **Part 2** with a new Discord application. Save the QA Public Key,
+Bot Token, and App ID — these are the QA credentials. The production app
+keeps its existing values.
+
+### 7.2 Create the Secrets Manager secrets
+
+The pipeline reads each stage's Discord credentials from a single JSON
+secret per stage. Create both secrets once (replace the placeholder values):
+
+```powershell
+aws secretsmanager create-secret `
+  --name bench-boss/qa `
+  --region us-east-1 `
+  --secret-string '{\"DiscordPublicKey\":\"<qa-public-key>\",\"DiscordToken\":\"<qa-bot-token>\"}'
+
+aws secretsmanager create-secret `
+  --name bench-boss/prod `
+  --region us-east-1 `
+  --secret-string '{\"DiscordPublicKey\":\"<prod-public-key>\",\"DiscordToken\":\"<prod-bot-token>\"}'
+```
+
+To rotate credentials later, use `aws secretsmanager update-secret` with the
+same `--secret-string` shape.
+
+### 7.3 Bootstrap the pipeline
+
+```powershell
+make pipeline-deploy
+```
+
+This deploys the `bench-boss-pipeline` stack. The pipeline will start its
+first execution as soon as a commit lands on `main` (or you can manually
+release a change from the console).
+
+### 7.4 Approve a production release
+
+1. Open the AWS Console → **CodePipeline** → `bench-boss-pipeline`
+2. Wait for **DeployQA** to go green
+3. Test the QA bot in your QA Discord server
+4. Click **Review** on the **ApproveProd** stage → **Approve**
+5. The **DeployProd** stage runs and updates the prod stack
+
+If you want to abandon a build instead of promoting it, click **Reject** on
+the approval action — the pipeline run ends, and the next push starts a
+fresh execution.
+
+### 7.5 Cost
+
+At low commit volume the pipeline is roughly **$2–3/month** (CodePipeline
+flat fee + a handful of build minutes + two Secrets Manager secrets).
+CodeCommit is free for the first 5 active users.
+
+### 7.6 Tearing it all down
+
+```powershell
+aws cloudformation delete-stack --stack-name bench-boss-prod --region us-east-1
+aws cloudformation delete-stack --stack-name bench-boss-qa --region us-east-1
+aws cloudformation delete-stack --stack-name bench-boss-pipeline --region us-east-1
+aws secretsmanager delete-secret --secret-id bench-boss/qa --force-delete-without-recovery --region us-east-1
+aws secretsmanager delete-secret --secret-id bench-boss/prod --force-delete-without-recovery --region us-east-1
+```
+
+> The pipeline's S3 artifact bucket must be emptied before the stack will
+> delete cleanly. Either empty it from the console or run
+> `aws s3 rm s3://<artifact-bucket-name> --recursive` first.
