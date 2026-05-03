@@ -1,7 +1,11 @@
-# BenchBoss — Discord Bot on AWS Fargate
+# BenchBoss — Discord Bot on AWS Lambda (SnapStart)
 
-A Python Discord bot with a `/ping` command, deployable to AWS Fargate.
-Discord sends an HTTP POST for every slash command to a long-running Flask server running in a Fargate container.
+A Python Discord bot deployed as two SnapStart Lambdas:
+
+- **Interactions Lambda** — invoked via a public Function URL on every slash command / button / modal submit.
+- **Stream Lambda** — triggered by DynamoDB Streams when a TTL'd event row is removed, so the next calendar event is auto-posted.
+
+State lives in a DynamoDB table with TTL + Streams enabled. There is no VPC, no load balancer, no container.
 
 ---
 
@@ -16,22 +20,23 @@ BenchBoss/
 │   ├── dynamo.py           # DynamoDB persistence for event RSVP state
 │   └── stream_handler.py   # DynamoDB stream event processor
 ├── tests/
-│   ├── test_bot.py         # Unit tests for bot logic
-│   ├── test_calendar.py    # Unit tests for calendar parsing
-│   ├── test_discord_api.py # Unit tests for embed/component builders
-│   ├── test_dynamo.py      # Unit tests for DynamoDB helpers
-│   └── test_stream_handler.py
+│   ├── test_bot.py
+│   ├── test_calendar.py
+│   ├── test_discord_api.py
+│   ├── test_dynamo.py
+│   ├── test_stream_handler.py
+│   ├── test_lambda_function.py
+│   └── test_stream_lambda_handler.py
 ├── local/
-│   ├── docker-compose.yml      # DynamoDB Local + Admin UI for local development
-│   ├── local_server.py         # Flask server for local development and Discord testing
+│   ├── docker-compose.yml      # DynamoDB Local + Admin UI
+│   ├── local_server.py         # Flask server for local Discord testing via ngrok
 │   └── create_local_table.py   # One-time script to create the local DynamoDB table
 ├── infrastructure/
-│   └── template.yaml       # CloudFormation template (ECS Fargate + ALB + DynamoDB)
-├── server.py               # Fargate HTTP server entry point (gunicorn + Flask)
-├── stream_poller.py        # Fargate stream poller entry point (polls DynamoDB Streams)
-├── Dockerfile              # Container image used for both Fargate services
-├── register_commands.py    # One-time script to register slash commands with Discord
-└── Pipfile                 # Python dependencies
+│   └── template.yaml       # SAM template (Lambda + DynamoDB)
+├── lambda_function.py          # Interactions Lambda entry point (Function URL)
+├── stream_lambda_handler.py    # Stream Lambda entry point (DynamoDB Streams)
+├── register_commands.py        # One-time script to register slash commands with Discord
+└── Pipfile                     # Python dependencies
 ```
 
 ---
@@ -243,33 +248,35 @@ Registered 2 command(s):
 
 ## Part 4 — Run Locally and Test with Discord
 
-### 4.1 Start the local server
+### 4.1 Start DynamoDB Local and the dev server
+
+In one terminal, start DynamoDB Local (and the admin UI on http://localhost:8001):
 
 ```powershell
-make server
+make dynamo-up
+make dynamo-init   # only needed the first time (or after a reset)
 ```
 
-This builds the Docker image and starts the full stack — the app (gunicorn on port 8080), DynamoDB Local (port 8000), and the DynamoDB admin UI (port 8001). Credentials are loaded automatically from your `.env` file.
+Then run the local Flask server (port 3000):
 
-You should see gunicorn start:
+```powershell
+make local
 ```
-[INFO] Listening at: http://0.0.0.0:8080
-```
+
+The server reads `DISCORD_PUBLIC_KEY` / `DISCORD_TOKEN` / `DYNAMODB_TABLE` from `.env`.
 
 ### 4.2 Start ngrok
 
 Open a **second** PowerShell window:
 
 ```powershell
-ngrok http 8080
+ngrok http 3000
 ```
 
 ngrok will print a public HTTPS URL:
 ```
-Forwarding  https://xxxx-xx-xx-xx-xx.ngrok-free.app -> http://localhost:8080
+Forwarding  https://xxxx-xx-xx-xx-xx.ngrok-free.app -> http://localhost:3000
 ```
-
-Copy the `https://` URL.
 
 ### 4.3 Point Discord at your local server
 
@@ -339,18 +346,20 @@ When a user RSVPs via any button (accepted / declined / tentative) or is added v
 
 ## Part 6 — Deploy to AWS (Production)
 
-The bot runs on **AWS ECS Fargate** behind an Application Load Balancer (ALB). The stream poller runs as a daemon thread inside the gunicorn process alongside the HTTP server.
+The bot runs as two **AWS Lambda** functions deployed via SAM:
 
-**Prerequisites before deploying:**
-- A custom domain with a DNS provider (e.g. Route 53)
-- An ACM certificate issued for that domain in the same region as your stack
+- `BenchBossFunction` — handles Discord interactions via a public Function URL.
+- `BenchBossStreamFunction` — triggered by the DynamoDB table's stream when a TTL'd event row is removed.
+
+Both functions have **SnapStart** enabled, so the published `live` alias serves restored snapshots in ~200–400ms instead of a full cold start. There is no ALB, VPC, ECS service, or NAT gateway — total infra cost at this volume is effectively $0.
 
 ### 6.1 Prerequisites
 
-Install the AWS CLI and Docker Desktop if you haven't already:
+Install the AWS CLI and SAM CLI:
 
 ```powershell
 winget install Amazon.AWSCLI
+winget install Amazon.SAM-CLI
 ```
 
 Configure AWS credentials:
@@ -358,91 +367,32 @@ Configure AWS credentials:
 aws configure
 ```
 
-### 6.2 Get an ACM certificate ARN
-
-The ALB needs a TLS certificate issued by AWS Certificate Manager (ACM). This is free.
-
-**Step 1 — request the certificate:**
-
-1. Open the [ACM console](https://console.aws.amazon.com/acm) and make sure you are in **us-east-1** (or whichever region you deploy to)
-2. Click **Request a certificate → Request a public certificate → Next**
-3. Under **Fully qualified domain name** enter the subdomain you want to use, e.g. `bot.yourdomain.com`
-4. Leave **DNS validation** selected (recommended) and click **Request**
-
-**Step 2 — validate ownership:**
-
-After requesting, ACM shows a **CNAME name** and **CNAME value** you must add to your domain's DNS.
-
-- **Route 53 (same AWS account):** click **Create records in Route 53** — ACM does it automatically
-- **Other DNS providers (Cloudflare, Namecheap, etc.):** copy the CNAME name/value and add a CNAME record in your DNS provider's dashboard
-
-Validation usually completes within a few minutes. Refresh the ACM console until the status shows **Issued**.
-
-**Step 3 — copy the ARN:**
-
-Once issued, click the certificate and copy the **ARN** at the top. It looks like:
-```
-arn:aws:acm:us-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-```
-
-This is your `CERTIFICATE_ARN` for the deploy command.
-
----
-
-### 6.3 Deploy the CloudFormation stack (first time)
-
-**Step 1 — create the ECR repository (once):**
-
-```powershell
-make ecr-create
-```
-
-**Step 2 — build and push the image:**
-
-```powershell
-make push
-```
-
-**Step 3 — deploy the stack:**
-
-You need four extra values. Find them in the AWS console:
-- `VPC_ID` — the VPC to deploy into (default VPC works fine)
-- `SUBNET_IDS` — at least two **public** subnets in different AZs, comma-separated
-- `CERTIFICATE_ARN` — ARN of an ACM certificate for your domain
-
-```powershell
-make deploy-infra `
-  DISCORD_PUBLIC_KEY=<your-key> `
-  DISCORD_TOKEN=<your-token> `
-  VPC_ID=vpc-xxxxxxxx `
-  SUBNET_IDS="subnet-aaa,subnet-bbb" `
-  CERTIFICATE_ARN=arn:aws:acm:us-east-1:123456789012:certificate/xxxx
-```
-
-### 6.4 Point your domain at the ALB
-
-The deploy output prints the ALB DNS name:
-```
-ALBDnsName: bench-boss-1234567890.us-east-1.elb.amazonaws.com
-```
-
-Create a **CNAME** (or Route 53 alias) record pointing your domain to that value:
-```
-bot.yourdomain.com  →  bench-boss-1234567890.us-east-1.elb.amazonaws.com
-```
-
-### 6.5 Update Discord
-
-1. Go to **Discord Developer Portal → General Information**
-2. Paste `https://bot.yourdomain.com/interactions` into **Interactions Endpoint URL**
-3. Click **Save Changes**
-
-Your bot is now live on AWS.
-
-### 6.6 Subsequent deploys
-
-Push a new image and redeploy the stack to force ECS to pull the latest task definition:
+### 6.2 First-time deploy
 
 ```powershell
 make deploy
 ```
+
+This runs `sam build` (packaging code + dependencies into a zip) and then `sam deploy`. SAM provisions an S3 bucket for artifacts automatically (`--resolve-s3`).
+
+After it finishes, the stack outputs the interactions endpoint:
+
+```
+InteractionsUrl: https://xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.lambda-url.us-east-1.on.aws/
+```
+
+### 6.3 Update Discord
+
+1. Go to **Discord Developer Portal → Your App → General Information**
+2. Paste the Function URL from the stack output into **Interactions Endpoint URL**
+3. Click **Save Changes**
+
+Discord sends a PING to verify the endpoint signs correctly. Your bot is now live.
+
+### 6.4 Subsequent deploys
+
+```powershell
+make deploy
+```
+
+SAM diffs the template and code, ships only what changed. Each deploy publishes a new Lambda version; SnapStart re-snapshots automatically when the version is published, so cold starts stay fast.

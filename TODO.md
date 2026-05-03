@@ -6,8 +6,10 @@
 - [ ] Support scheduling multiple upcoming events (currently only posts the next one)
 - [ ] Edit / reschedule an existing event
 - [ ] Reminder notifications before event start
+- [ ] Automatically delete expired events and recreate recurring ones without significant cost increase (investigate EventBridge Scheduler or DynamoDB TTL-triggered Lambda)
 
 ## Infrastructure
+- [X] Migrate from ECS + ALB back to Lambda + Function URL to eliminate ~$28/month in ALB/ECS/NAT costs
 - [ ] Add CI pipeline (lint, test, deploy)
 - [ ] Environment variable validation on startup
 

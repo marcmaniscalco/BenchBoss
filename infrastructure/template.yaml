@@ -1,5 +1,12 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: BenchBoss — Discord Bot on ECS Fargate
+Transform: AWS::Serverless-2016-10-31
+Description: BenchBoss — Discord Bot on AWS Lambda (SnapStart)
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 10
+    MemorySize: 512
 
 Parameters:
   DiscordPublicKey:
@@ -10,22 +17,8 @@ Parameters:
     Type: String
     Description: "Discord bot token (Developer Portal > Bot > Token)"
     NoEcho: true
-  ImageUri:
-    Type: String
-    Description: "ECR image URI including tag (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/bench-boss:latest)"
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: "VPC to deploy into (use the default VPC if unsure)"
-  SubnetIds:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: "At least two public subnets in different AZs (required by the ALB)"
-  CertificateArn:
-    Type: String
-    Description: "ARN of an ACM certificate for your domain (must be in us-east-1 for CloudFront, or the same region as the ALB)"
 
 Resources:
-
-  # ── DynamoDB ────────────────────────────────────────────────────────────────
 
   BenchBossTable:
     Type: AWS::DynamoDB::Table
@@ -43,185 +36,54 @@ Resources:
       StreamSpecification:
         StreamViewType: OLD_IMAGE
 
-  # ── IAM ─────────────────────────────────────────────────────────────────────
-
-  # Allows ECS to pull the image from ECR and ship logs to CloudWatch
-  TaskExecutionRole:
-    Type: AWS::IAM::Role
+  BenchBossFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      RoleName: bench-boss-task-execution-role
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-
-  # Grants the running container access to DynamoDB
-  TaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: bench-boss-task-role
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
+      CodeUri: ../
+      Handler: lambda_function.lambda_handler
+      AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
       Policies:
-        - PolicyName: bench-boss-dynamodb
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
-                  - dynamodb:DescribeTable
-                Resource: !GetAtt BenchBossTable.Arn
-              - Effect: Allow
-                Action:
-                  - dynamodb:DescribeStream
-                  - dynamodb:GetRecords
-                  - dynamodb:GetShardIterator
-                  - dynamodb:ListStreams
-                Resource: !GetAtt BenchBossTable.StreamArn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BenchBossTable
+      Environment:
+        Variables:
+          DISCORD_PUBLIC_KEY: !Ref DiscordPublicKey
+          DISCORD_TOKEN: !Ref DiscordToken
+          DYNAMODB_TABLE: !Ref BenchBossTable
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
 
-  # ── Logging ─────────────────────────────────────────────────────────────────
-
-  LogGroup:
-    Type: AWS::Logs::LogGroup
+  BenchBossStreamFunction:
+    Type: AWS::Serverless::Function
     Properties:
-      LogGroupName: /ecs/bench-boss
-      RetentionInDays: 7
-
-  # ── Security Groups ──────────────────────────────────────────────────────────
-
-  ALBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTPS inbound from the internet
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-
-  TaskSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow traffic from the ALB to Fargate tasks
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8080
-          ToPort: 8080
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-
-  # ── Load Balancer ────────────────────────────────────────────────────────────
-
-  ALB:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: bench-boss
-      Type: application
-      Scheme: internet-facing
-      Subnets: !Ref SubnetIds
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
-
-  TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: bench-boss
-      VpcId: !Ref VpcId
-      Protocol: HTTP
-      Port: 8080
-      TargetType: ip
-      HealthCheckPath: /health
-      HealthCheckIntervalSeconds: 30
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 5
-
-  Listener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ALB
-      Protocol: HTTPS
-      Port: 443
-      Certificates:
-        - CertificateArn: !Ref CertificateArn
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref TargetGroup
-
-  # ── ECS ─────────────────────────────────────────────────────────────────────
-
-  Cluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: bench-boss
-
-  TaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: bench-boss
-      Cpu: "256"
-      Memory: "512"
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
-      TaskRoleArn: !GetAtt TaskRole.Arn
-      ContainerDefinitions:
-        - Name: bench-boss
-          Image: !Ref ImageUri
-          PortMappings:
-            - ContainerPort: 8080
-          Environment:
-            - Name: DISCORD_PUBLIC_KEY
-              Value: !Ref DiscordPublicKey
-            - Name: DISCORD_TOKEN
-              Value: !Ref DiscordToken
-            - Name: DYNAMODB_TABLE
-              Value: !Ref BenchBossTable
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: bench-boss
-
-  Service:
-    Type: AWS::ECS::Service
-    DependsOn: Listener
-    Properties:
-      ServiceName: bench-boss
-      Cluster: !Ref Cluster
-      LaunchType: FARGATE
-      DesiredCount: 1
-      TaskDefinition: !Ref TaskDefinition
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          Subnets: !Ref SubnetIds
-          SecurityGroups:
-            - !Ref TaskSecurityGroup
-      LoadBalancers:
-        - ContainerName: bench-boss
-          ContainerPort: 8080
-          TargetGroupArn: !Ref TargetGroup
+      Timeout: 30
+      CodeUri: ../
+      Handler: stream_lambda_handler.stream_lambda_handler
+      AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BenchBossTable
+      Environment:
+        Variables:
+          DISCORD_TOKEN: !Ref DiscordToken
+          DYNAMODB_TABLE: !Ref BenchBossTable
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt BenchBossTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            BatchSize: 10
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"eventName":["REMOVE"]}'
 
 Outputs:
-  ALBDnsName:
-    Description: "Create a DNS CNAME/alias for your domain pointing here, then use https://{your-domain}/interactions in Discord"
-    Value: !GetAtt ALB.DNSName
+  InteractionsUrl:
+    Description: "Paste this into Discord Developer Portal > General Information > Interactions Endpoint URL (append /interactions is NOT required — the Function URL is the endpoint)"
+    Value: !GetAtt BenchBossFunctionUrl.FunctionUrl
