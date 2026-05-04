@@ -3,8 +3,6 @@ Core bot logic.
 """
 
 import logging
-import threading
-import time
 import uuid
 from datetime import UTC, date, datetime
 
@@ -12,7 +10,7 @@ import requests
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.constants import FULLTIME_ROLE_ID, MESSAGE_FETCH_DELAY
+from bench_boss.constants import FULLTIME_ROLE_ID
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
     build_delete_confirm_buttons,
@@ -107,8 +105,6 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             return _handle_schedule(
                 options.get("url", ""),
                 guild_id=body.get("guild_id"),
-                app_id=body.get("application_id", ""),
-                interaction_token=body.get("token", ""),
                 channel_id=body.get("channel_id", ""),
             )
 
@@ -162,8 +158,6 @@ def _ensure_utc_iso(dt: datetime) -> str:
 def _handle_schedule(
     webcal_url: str,
     guild_id: str | None = None,
-    app_id: str = "",
-    interaction_token: str = "",
     channel_id: str = "",
 ) -> dict:
     if not webcal_url:
@@ -223,13 +217,12 @@ def _handle_schedule(
     )
     components = build_rsvp_components(event_key)
 
-    if app_id and interaction_token:
-        threading.Thread(
-            target=_fetch_and_store_message_ref,
-            args=(app_id, interaction_token, event_key),
-            daemon=True,
-        ).start()
-
+    # Note: we don't store (channel_id, message_id) here because we don't
+    # know the message_id yet — Discord assigns it when it posts the embed
+    # in response to this interaction. On Lambda we can't fire-and-forget a
+    # follow-up fetch (the execution environment freezes when the handler
+    # returns). Instead, message_id is captured lazily on the first RSVP
+    # button click via store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
         "body": {
@@ -695,48 +688,6 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         )
 
 
-def _fetch_and_store_message_ref(
-    app_id: str, interaction_token: str, event_key: str
-) -> None:
-    """Fetch the original interaction response message and persist its ID."""
-    time.sleep(MESSAGE_FETCH_DELAY)  # Give Discord time to persist the message
-    resp = requests.get(
-        f"https://discord.com/api/v10/webhooks/{app_id}/{interaction_token}/messages/@original",
-        timeout=10,
-    )
-    if not resp.ok:
-        logger.warning(
-            "Failed to fetch original message for event %s: %s",
-            event_key,
-            resp.status_code,
-        )
-        return
-    data = resp.json()
-    message_id = data.get("id")
-    channel_id = data.get("channel_id")
-    if message_id and channel_id:
-        store_message_ref(event_key, channel_id, message_id)
-        logger.info(
-            "Stored message ref for event %s (channel=%s message=%s)",
-            event_key,
-            channel_id,
-            message_id,
-        )
-    else:
-        logger.warning(
-            "Original message for event %s missing id or channel_id", event_key
-        )
-
-
-def _delete_original_message(app_id: str, token: str) -> None:
-    """Delete the original event message after the interaction callback was sent."""
-    time.sleep(MESSAGE_FETCH_DELAY)
-    requests.delete(
-        f"https://discord.com/api/v10/webhooks/{app_id}/{token}/messages/@original",
-        timeout=10,
-    )
-
-
 def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) -> None:
     """Delete an event embed from the channel using the bot token."""
     try:
@@ -773,13 +724,16 @@ def _handle_events(webcal_url: str, body: dict, bot_token: str) -> dict:
     if not user_id or not bot_token:
         return _ephemeral("Could not determine your user ID.")
 
-    threading.Thread(
-        target=_send_dm_events,
-        args=(webcal_url, user_id, bot_token),
-        daemon=True,
-    ).start()
-
-    return _ephemeral("Sending you a DM with all events from the calendar.")
+    # Run synchronously: in Lambda the execution environment freezes the
+    # moment the handler returns, so a background thread would be paused
+    # mid-flight and the DM wouldn't actually go out until the next
+    # invocation thaws the environment.
+    if _send_dm_events(webcal_url, user_id, bot_token):
+        return _ephemeral("Sent you a DM with all events from the calendar.")
+    return _ephemeral(
+        "Sorry — I couldn't send you the events DM. "
+        "Make sure you allow DMs from server members and try again."
+    )
 
 
 def _format_event_line(ev) -> str:
@@ -793,12 +747,12 @@ def _format_event_line(ev) -> str:
     return f"**{ev.summary}** — {date_str}"
 
 
-def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
+def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> bool:
     try:
         events = WebCalReader(webcal_url).get_remaining()
     except Exception as e:
         logger.error("Failed to fetch calendar for events DM: %s", e)
-        return
+        return False
 
     if not events:
         content = "No events found in the calendar."
@@ -822,7 +776,7 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
         logger.error(
             "Failed to create DM channel for user %s: %s", user_id, dm_resp.status_code
         )
-        return
+        return False
 
     channel_id = dm_resp.json().get("id")
     msg_resp = requests.post(
@@ -833,13 +787,14 @@ def _send_dm_events(webcal_url: str, user_id: str, bot_token: str) -> None:
     )
     if msg_resp.ok:
         logger.info("Sent events DM to user %s", user_id)
-    else:
-        logger.error(
-            "Failed to send events DM to user %s: %s %s",
-            user_id,
-            msg_resp.status_code,
-            msg_resp.text,
-        )
+        return True
+    logger.error(
+        "Failed to send events DM to user %s: %s %s",
+        user_id,
+        msg_resp.status_code,
+        msg_resp.text,
+    )
+    return False
 
 
 def _message(content: str, ephemeral: bool = False) -> dict:

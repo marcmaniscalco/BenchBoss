@@ -15,8 +15,6 @@ from bench_boss.bot import (
     PING,
     PONG,
     UPDATE_MESSAGE,
-    _delete_original_message,
-    _fetch_and_store_message_ref,
     _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
@@ -320,32 +318,6 @@ class TestScheduleInteraction:
         assert kwargs["name"] == "My Event"
         assert kwargs["location"] == "Room 1"
         assert kwargs["guild_id"] == "g1"
-
-    def test_message_ref_fetched_in_background_when_token_present(self):
-        event = make_calendar_event("Game Night")
-        body = {
-            "type": APPLICATION_COMMAND,
-            "guild_id": "g1",
-            "application_id": "app1",
-            "token": "tok1",
-            "data": {
-                "name": "schedule",
-                "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
-            },
-        }
-        with (
-            patch("bench_boss.bot.WebCalReader") as mock_reader,
-            patch("bench_boss.bot.save_event"),
-            patch("bench_boss.bot.threading.Thread") as mock_thread,
-        ):
-            mock_reader.return_value.get_upcoming.return_value = [event]
-            handle_interaction(body)
-
-        mock_thread.assert_called_once()
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["target"] == _fetch_and_store_message_ref
-        assert kwargs["daemon"] is True
-        mock_thread.return_value.start.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -797,90 +769,6 @@ class TestUpdateChannelMessage:
         mock_patch.assert_not_called()
         mock_logger.warning.assert_called()
 
-
-class TestDeleteOriginalMessage:
-    def test_calls_correct_webhook_url(self):
-        with (
-            patch("bench_boss.bot.time.sleep"),
-            patch("bench_boss.bot.requests.delete") as mock_req,
-        ):
-            _delete_original_message("myapp", "mytoken")
-        url = mock_req.call_args[0][0]
-        assert "webhooks/myapp/mytoken/messages/@original" in url
-
-    def test_sleeps_before_deleting(self):
-        with (
-            patch("bench_boss.bot.time.sleep") as mock_sleep,
-            patch("bench_boss.bot.requests.delete"),
-        ):
-            _delete_original_message("app", "tok")
-        mock_sleep.assert_called_once()
-        assert mock_sleep.call_args[0][0] > 0
-
-
-# ---------------------------------------------------------------------------
-# _fetch_and_store_message_ref
-# ---------------------------------------------------------------------------
-
-
-class TestFetchAndStoreMessageRef:
-    def _mock_get(self, ok=True, message_id="msg1", channel_id="ch1"):
-        resp = MagicMock()
-        resp.ok = ok
-        resp.status_code = 200 if ok else 404
-        resp.json.return_value = {"id": message_id, "channel_id": channel_id}
-        return resp
-
-    def test_stores_message_ref_on_success(self):
-        with (
-            patch("bench_boss.bot.time.sleep"),
-            patch("bench_boss.bot.requests.get", return_value=self._mock_get()),
-            patch("bench_boss.bot.store_message_ref") as mock_store,
-        ):
-            _fetch_and_store_message_ref("app1", "tok1", "key1")
-        mock_store.assert_called_once_with("key1", "ch1", "msg1")
-
-    def test_fetches_correct_webhook_url(self):
-        with (
-            patch("bench_boss.bot.time.sleep"),
-            patch(
-                "bench_boss.bot.requests.get", return_value=self._mock_get()
-            ) as mock_get,
-            patch("bench_boss.bot.store_message_ref"),
-        ):
-            _fetch_and_store_message_ref("app1", "tok1", "key1")
-        url = mock_get.call_args[0][0]
-        assert "webhooks/app1/tok1/messages/@original" in url
-
-    def test_failed_get_skips_store(self):
-        with (
-            patch("bench_boss.bot.time.sleep"),
-            patch("bench_boss.bot.requests.get", return_value=self._mock_get(ok=False)),
-            patch("bench_boss.bot.store_message_ref") as mock_store,
-        ):
-            _fetch_and_store_message_ref("app1", "tok1", "key1")
-        mock_store.assert_not_called()
-
-    def test_missing_message_id_in_response_skips_store(self):
-        resp = MagicMock()
-        resp.ok = True
-        resp.json.return_value = {"channel_id": "ch1"}  # no "id"
-        with (
-            patch("bench_boss.bot.time.sleep"),
-            patch("bench_boss.bot.requests.get", return_value=resp),
-            patch("bench_boss.bot.store_message_ref") as mock_store,
-        ):
-            _fetch_and_store_message_ref("app1", "tok1", "key1")
-        mock_store.assert_not_called()
-
-    def test_sleeps_before_fetching(self):
-        with (
-            patch("bench_boss.bot.time.sleep") as mock_sleep,
-            patch("bench_boss.bot.requests.get", return_value=self._mock_get()),
-            patch("bench_boss.bot.store_message_ref"),
-        ):
-            _fetch_and_store_message_ref("app1", "tok1", "key1")
-        mock_sleep.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1616,18 +1504,28 @@ class TestEventsInteraction:
         assert "Could not determine" in result["body"]["data"]["content"]
         assert result["body"]["data"]["flags"] == 64
 
-    def test_success_returns_ephemeral_and_starts_thread(self):
-        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+    def test_success_returns_ephemeral_after_sending_dm(self):
+        with patch(
+            "bench_boss.bot._send_dm_events", return_value=True
+        ) as mock_send:
             result = handle_interaction(
                 make_events_body("https://example.com/cal.ics"), bot_token="tok"
             )
         assert result["statusCode"] == 200
         assert result["body"]["data"]["flags"] == 64
-        assert "DM" in result["body"]["data"]["content"]
-        mock_thread.assert_called_once()
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["target"] == _send_dm_events
-        assert kwargs["args"] == ("https://example.com/cal.ics", "user1", "tok")
+        assert "Sent you a DM" in result["body"]["data"]["content"]
+        mock_send.assert_called_once_with(
+            "https://example.com/cal.ics", "user1", "tok"
+        )
+
+    def test_dm_send_failure_returns_ephemeral_error(self):
+        with patch("bench_boss.bot._send_dm_events", return_value=False):
+            result = handle_interaction(
+                make_events_body("https://example.com/cal.ics"), bot_token="tok"
+            )
+        assert result["statusCode"] == 200
+        assert result["body"]["data"]["flags"] == 64
+        assert "couldn't send" in result["body"]["data"]["content"]
 
     def test_user_id_from_top_level_user_field(self):
         body = {
@@ -1638,10 +1536,13 @@ class TestEventsInteraction:
                 "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
             },
         }
-        with patch("bench_boss.bot.threading.Thread") as mock_thread:
+        with patch(
+            "bench_boss.bot._send_dm_events", return_value=True
+        ) as mock_send:
             handle_interaction(body, bot_token="tok")
-        kwargs = mock_thread.call_args[1]
-        assert kwargs["args"][1] == "user99"
+        mock_send.assert_called_once_with(
+            "https://example.com/cal.ics", "user99", "tok"
+        )
 
 
 class TestSendDmEvents:
@@ -1665,8 +1566,9 @@ class TestSendDmEvents:
             ) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = [ev]
-            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+            result = _send_dm_events("https://example.com/cal.ics", "user1", "tok")
 
+        assert result is True
         assert mock_post.call_count == 2
         # Second call sends the message to the DM channel
         msg_call_kwargs = mock_post.call_args_list[1][1]
@@ -1683,22 +1585,24 @@ class TestSendDmEvents:
             ) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = []
-            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+            result = _send_dm_events("https://example.com/cal.ics", "user1", "tok")
 
+        assert result is True
         msg_call_kwargs = mock_post.call_args_list[1][1]
         assert "No events found" in msg_call_kwargs["json"]["content"]
 
-    def test_calendar_fetch_failure_aborts_silently(self):
+    def test_calendar_fetch_failure_returns_false(self):
         with (
             patch("bench_boss.bot.WebCalReader") as mock_reader,
             patch("bench_boss.bot.requests.post") as mock_post,
         ):
             mock_reader.return_value.get_remaining.side_effect = Exception("timeout")
-            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+            result = _send_dm_events("https://example.com/cal.ics", "user1", "tok")
 
+        assert result is False
         mock_post.assert_not_called()
 
-    def test_dm_channel_creation_failure_aborts(self):
+    def test_dm_channel_creation_failure_returns_false(self):
         dm_resp = MagicMock()
         dm_resp.ok = False
         dm_resp.status_code = 403
@@ -1709,11 +1613,31 @@ class TestSendDmEvents:
             patch("bench_boss.bot.requests.post", return_value=dm_resp) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = [ev]
-            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+            result = _send_dm_events("https://example.com/cal.ics", "user1", "tok")
 
-        assert (
-            mock_post.call_count == 1
-        )  # Only the DM channel creation, no message sent
+        assert result is False
+        # Only the DM channel creation, no message sent
+        assert mock_post.call_count == 1
+
+    def test_message_send_failure_returns_false(self):
+        dm_resp = MagicMock()
+        dm_resp.ok = True
+        dm_resp.json.return_value = {"id": "dm123"}
+
+        msg_resp = MagicMock()
+        msg_resp.ok = False
+        msg_resp.status_code = 500
+        msg_resp.text = "internal error"
+
+        ev = make_calendar_event()
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post", side_effect=[dm_resp, msg_resp]),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            result = _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+
+        assert result is False
 
     def test_long_event_list_truncated_to_2000_chars(self):
         events = [make_calendar_event(f"Event {'X' * 100} {i}") for i in range(30)]
@@ -1725,8 +1649,9 @@ class TestSendDmEvents:
             ) as mock_post,
         ):
             mock_reader.return_value.get_remaining.return_value = events
-            _send_dm_events("https://example.com/cal.ics", "user1", "tok")
+            result = _send_dm_events("https://example.com/cal.ics", "user1", "tok")
 
+        assert result is True
         msg_call_kwargs = mock_post.call_args_list[1][1]
         assert len(msg_call_kwargs["json"]["content"]) <= 2000
 
