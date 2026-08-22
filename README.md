@@ -667,3 +667,36 @@ aws secretsmanager delete-secret --secret-id bench-boss/prod --force-delete-with
 > The pipeline's S3 artifact bucket must be emptied before the stack will
 > delete cleanly. Either empty it from the console or run
 > `aws s3 rm s3://<artifact-bucket-name> --recursive` first.
+
+---
+
+## Part 8 — Automated PR Code Review (Claude Code Action)
+
+`.github/workflows/claude-code-review.yml` runs [Claude Code Action](https://github.com/anthropics/claude-code-action)
+on every PR open/update. It posts a review (top-level + inline comments via
+`gh pr comment` and the GitHub inline-comment tool) covering code quality,
+bugs, security, and performance, and follows this repo's `CLAUDE.md`
+conventions automatically. This is separate from the CodePipeline build in
+**Part 7** — the pipeline gates what merges into `main` from a CI
+correctness standpoint; this workflow is an AI reviewer commenting on the
+PR itself. It doesn't affect the CODEOWNERS approval requirement from PR
+branch protection — that's still required to merge.
+
+### 8.1 One-time setup
+
+Both steps require repository admin access and can't be automated (they're
+interactive GitHub authorization steps):
+
+1. Install the Claude GitHub App: https://github.com/apps/claude — select
+   this repository during install.
+2. Add a repository secret (Settings → Secrets and variables → Actions →
+   New repository secret) — never paste this value into a chat session:
+   - `ANTHROPIC_API_KEY` (from the [Claude Console](https://platform.claude.com)), or
+   - `CLAUDE_CODE_OAUTH_TOKEN` (Pro/Max users: run `claude setup-token` locally)
+
+   If you use the OAuth token instead, update the workflow's
+   `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` line to
+   `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`.
+
+Once both are done, opening or updating a PR triggers the review
+automatically — no further action needed.
