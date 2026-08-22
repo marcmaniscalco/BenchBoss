@@ -36,6 +36,15 @@ Format code:
 make format
 ```
 
+## Cross-Platform Compatibility
+
+Local development happens on Windows, but CI (CodeBuild) runs on Linux. Never bake OS-native path separators or other Windows-only assumptions into anything that gets committed or that CI reads.
+
+- Always normalize file paths to forward slashes in any generated/committed artifact (e.g. `.secrets.baseline`) — don't assume `os.sep` is `/`.
+- When a tool (like `detect-secrets scan`) writes paths using the host OS's separator, post-process its output to forward slashes before committing, and keep that normalization step in the tooling (see `local/normalize_secrets_baseline.py`) so it isn't a one-off manual fix.
+- When writing scripts intended to run in CI, verify they work without relying on Windows-specific behavior, and prefer stdlib path handling (`pathlib`, which is separator-aware) over hardcoded `\` or `/`.
+- If a check passes locally on Windows, that is not sufficient evidence it will pass in Linux CI — reason about what the CI environment actually looks like (e.g. CodeBuild's GitHub source is a zip snapshot with no `.git` directory) rather than assuming parity with local dev.
+
 ## AWS Guidance
 
 - Prefer the AWS MCP Server for AWS interactions — it provides sandboxed
