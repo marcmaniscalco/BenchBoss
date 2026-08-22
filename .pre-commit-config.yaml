@@ -24,3 +24,12 @@ repos:
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
+
+  - repo: local
+    hooks:
+      - id: normalize-secrets-baseline
+        name: Normalize .secrets.baseline path separators
+        entry: python local/normalize_secrets_baseline.py
+        language: system
+        always_run: true
+        pass_filenames: false

@@ -27,6 +27,20 @@ Parameters:
     Type: String
     Default: bench-boss/prod
     Description: Secrets Manager secret holding Prod Discord credentials as JSON
+  GitHubConnectionArn:
+    Type: String
+    Default: arn:aws:codeconnections:us-east-1:629520208838:connection/20e2ba2a-cd39-4912-850c-004bf1461bb7
+    Description: >-
+      ARN of an existing CodeConnections connection to GitHub. Not a
+      CloudFormation-managed resource: a connection only enables webhook-based
+      triggering once the underlying GitHub App is actually installed (with
+      repository access granted), and that install step only happens through
+      the console (Settings > Connections > Create connection > Connect to
+      GitHub > Install a new app) — CloudFormation can create a Connection
+      resource, but can't drive that install flow. Authorizing a connection
+      without installing the app (or reusing one that was never installed)
+      leaves it "Available" and able to pull source, but silently without a
+      working webhook, so the pipeline only ever runs when started manually.
 
 Resources:
 
@@ -52,18 +66,6 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-
-  # ────────────────────────────────────────────────────────────────────────────
-  # GitHub connection — after this stack deploys, open AWS Console →
-  # Developer Tools → Settings → Connections and click "Update pending
-  # connection" to complete the GitHub OAuth handshake once. The pipeline's
-  # Source stage will not work until the connection status is "Available".
-  # ────────────────────────────────────────────────────────────────────────────
-  GitHubConnection:
-    Type: AWS::CodeStarConnections::Connection
-    Properties:
-      ConnectionName: !Sub "${AWS::StackName}-github"
-      ProviderType: GitHub
 
   # ────────────────────────────────────────────────────────────────────────────
   # CodeBuild — runs lint + tests, then sam build / sam package
@@ -168,7 +170,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
-                Resource: !Ref GitHubConnection
+                Resource: !Ref GitHubConnectionArn
               - Effect: Allow
                 Action:
                   - codebuild:BatchGetBuilds
@@ -194,7 +196,11 @@ Resources:
   # ────────────────────────────────────────────────────────────────────────────
   # The pipeline
   # A CodeStarSourceConnection source action triggers automatically on push
-  # via a GitHub webhook — no separate EventBridge rule needed.
+  # via a GitHub webhook — no separate EventBridge rule needed — but only if
+  # GitHubConnectionArn's GitHub App is actually installed on the repo (see
+  # that parameter's description). An authorized-but-not-installed connection
+  # can still pull source, so this silently degrades to manual-start-only
+  # instead of failing loudly.
   # ────────────────────────────────────────────────────────────────────────────
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -214,7 +220,7 @@ Resources:
                 Provider: CodeStarSourceConnection
                 Version: "1"
               Configuration:
-                ConnectionArn: !Ref GitHubConnection
+                ConnectionArn: !Ref GitHubConnectionArn
                 FullRepositoryId: !Sub "${GitHubOwner}/${RepositoryName}"
                 BranchName: !Ref BranchName
                 DetectChanges: true
@@ -301,8 +307,9 @@ Outputs:
     Value: !Ref ArtifactBucket
   GitHubConnectionArn:
     Description: >-
-      CodeStar Connections ARN. After the first deploy this connection sits
-      in PENDING status — open it in the console (Developer Tools > Settings
-      > Connections) and click "Update pending connection" to complete the
-      GitHub OAuth handshake before the pipeline can pull source.
-    Value: !Ref GitHubConnection
+      CodeConnections ARN the Source stage authenticates with. Must reference
+      a connection whose GitHub App is actually installed on this repository
+      (Settings > Connections > the connection > check for repo access under
+      the installed GitHub App, not just an authorized one) — otherwise the
+      pipeline can pull source but will never trigger automatically on push.
+    Value: !Ref GitHubConnectionArn
