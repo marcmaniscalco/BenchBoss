@@ -691,12 +691,14 @@ interactive GitHub authorization steps):
    this repository during install.
 2. Add a repository secret (Settings → Secrets and variables → Actions →
    New repository secret) — never paste this value into a chat session:
-   - `ANTHROPIC_API_KEY` (from the [Claude Console](https://platform.claude.com)), or
-   - `CLAUDE_CODE_OAUTH_TOKEN` (Pro/Max users: run `claude setup-token` locally)
+   - `CLAUDE_CODE_OAUTH_TOKEN` (Pro/Max users: run `claude setup-token`
+     locally — this project uses this option), or
+   - `ANTHROPIC_API_KEY` (from the [Claude Console](https://platform.claude.com))
+     instead, if you'd rather pay per-token than use your subscription.
 
-   If you use the OAuth token instead, update the workflow's
-   `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` line to
-   `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}`.
+   If you switch to the API key, update the workflow's
+   `claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}` line to
+   `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}`.
 
 Once both are done, opening or updating a PR triggers the review
 automatically — no further action needed.
