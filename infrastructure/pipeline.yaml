@@ -1,10 +1,15 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: BenchBoss CI/CD pipeline — CodeCommit -> Build -> Deploy QA -> Manual Approval -> Deploy Prod
+Description: BenchBoss CI/CD pipeline — GitHub -> Build -> Deploy QA -> Manual Approval -> Deploy Prod
 
 Parameters:
+  GitHubOwner:
+    Type: String
+    Default: marcmaniscalco
+    Description: GitHub org/user that owns the repository
   RepositoryName:
     Type: String
     Default: BenchBoss
+    Description: GitHub repository name (without the owner prefix)
   BranchName:
     Type: String
     Default: main
@@ -47,6 +52,18 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # GitHub connection — after this stack deploys, open AWS Console →
+  # Developer Tools → Settings → Connections and click "Update pending
+  # connection" to complete the GitHub OAuth handshake once. The pipeline's
+  # Source stage will not work until the connection status is "Available".
+  # ────────────────────────────────────────────────────────────────────────────
+  GitHubConnection:
+    Type: AWS::CodeStarConnections::Connection
+    Properties:
+      ConnectionName: !Sub "${AWS::StackName}-github"
+      ProviderType: GitHub
 
   # ────────────────────────────────────────────────────────────────────────────
   # CodeBuild — runs lint + tests, then sam build / sam package
@@ -150,12 +167,8 @@ Resources:
                   - !Sub "${ArtifactBucket.Arn}/*"
               - Effect: Allow
                 Action:
-                  - codecommit:GetBranch
-                  - codecommit:GetCommit
-                  - codecommit:UploadArchive
-                  - codecommit:GetUploadArchiveStatus
-                  - codecommit:CancelUploadArchive
-                Resource: !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnection
               - Effect: Allow
                 Action:
                   - codebuild:BatchGetBuilds
@@ -179,52 +192,9 @@ Resources:
                 Resource: !GetAtt CloudFormationRole.Arn
 
   # ────────────────────────────────────────────────────────────────────────────
-  # EventBridge trigger — start the pipeline when main is updated
-  # ────────────────────────────────────────────────────────────────────────────
-  PipelineEventRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: StartPipeline
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action: codepipeline:StartPipelineExecution
-                Resource: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
-
-  PipelineTriggerRule:
-    Type: AWS::Events::Rule
-    Properties:
-      EventPattern:
-        source:
-          - aws.codecommit
-        detail-type:
-          - "CodeCommit Repository State Change"
-        resources:
-          - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}"
-        detail:
-          event:
-            - referenceCreated
-            - referenceUpdated
-          referenceType:
-            - branch
-          referenceName:
-            - !Ref BranchName
-      Targets:
-        - Arn: !Sub "arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
-          Id: bench-boss-pipeline-target
-          RoleArn: !GetAtt PipelineEventRole.Arn
-
-  # ────────────────────────────────────────────────────────────────────────────
   # The pipeline
+  # A CodeStarSourceConnection source action triggers automatically on push
+  # via a GitHub webhook — no separate EventBridge rule needed.
   # ────────────────────────────────────────────────────────────────────────────
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -241,12 +211,14 @@ Resources:
               ActionTypeId:
                 Category: Source
                 Owner: AWS
-                Provider: CodeCommit
+                Provider: CodeStarSourceConnection
                 Version: "1"
               Configuration:
-                RepositoryName: !Ref RepositoryName
+                ConnectionArn: !Ref GitHubConnection
+                FullRepositoryId: !Sub "${GitHubOwner}/${RepositoryName}"
                 BranchName: !Ref BranchName
-                PollForSourceChanges: false
+                DetectChanges: true
+                OutputArtifactFormat: CODE_ZIP
               OutputArtifacts:
                 - Name: SourceArtifact
 
@@ -327,3 +299,10 @@ Outputs:
   ArtifactBucket:
     Description: Bucket where pipeline artifacts and Lambda packages are stored
     Value: !Ref ArtifactBucket
+  GitHubConnectionArn:
+    Description: >-
+      CodeStar Connections ARN. After the first deploy this connection sits
+      in PENDING status — open it in the console (Developer Tools > Settings
+      > Connections) and click "Update pending connection" to complete the
+      GitHub OAuth handshake before the pipeline can pull source.
+    Value: !Ref GitHubConnection

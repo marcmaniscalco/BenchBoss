@@ -86,6 +86,58 @@ Verify:
 ngrok version
 ```
 
+### AWS Agent Toolkit (for AI-assisted development)
+
+Optional, but recommended if you're using Claude Code (or another AI tool)
+to work on this repo — gives it sandboxed AWS access via MCP (skills,
+credential resolution, observability/audit logging).
+
+1. Install `uv` if missing:
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+```
+
+2. Install AWS CLI v2 if missing:
+```powershell
+irm 'https://awscli.amazonaws.com/v2/install.ps1' | iex
+```
+
+3. Configure a profile and log in via browser (credentials last 12 hours,
+   renewable for 90 days without re-authenticating):
+```powershell
+aws configure set region us-east-1 --profile default
+aws login --region us-east-1 --profile default
+```
+
+4. Install the Agent Toolkit (always `us-east-1`, regardless of your deploy
+   region):
+```powershell
+aws configure agent-toolkit --yes --region us-east-1 --profile default
+```
+
+5. Wire your profile into the AI tool's MCP config. For Claude Code, add
+   this to the `aws-mcp` server entry in `~/.claude.json`:
+```json
+"env": {
+  "AWS_MCP_PROXY_PROFILES": "default"
+}
+```
+
+6. **Windows only** — the AWS CLI can crash with a `UnicodeEncodeError`
+   (`'charmap' codec can't encode character...`) when its output is piped
+   or redirected instead of shown in an interactive terminal (some Agent
+   Toolkit skill descriptions contain non-ASCII characters like `→`). Fix
+   it by adding this to your PowerShell profile (`$PROFILE`):
+```powershell
+$env:PYTHONUTF8 = "1"
+```
+
+Verify:
+```powershell
+aws sts get-caller-identity --profile default
+aws agent-toolkit list-available-skills --region us-east-1 --profile default
+```
+
 ---
 
 ## Part 2 — Create a Discord Application
@@ -424,12 +476,14 @@ CloudFormation stack that creates:
 
 - A CodeBuild project that runs `ruff`, `pytest --cov`, and `sam build`/`sam package`
 - A CodePipeline with five stages:
-  1. **Source** — pulls from CodeCommit (`BenchBoss` repo, `main` branch)
+  1. **Source** — pulls from GitHub (`marcmaniscalco/BenchBoss`, `main` branch) via a
+     CodeStar Connections GitHub App connection
   2. **Build** — runs lint + unit tests, then packages the Lambdas
   3. **DeployQA** — applies the SAM template as `bench-boss-qa`
   4. **ApproveProd** — manual approval gate (you click **Approve** in the console)
   5. **DeployProd** — applies the same template as `bench-boss-prod`
-- An EventBridge rule that triggers the pipeline on every push to `main`
+- A GitHub webhook (registered automatically by the CodeStar connection) that
+  triggers the pipeline on every push to `main`
 - An S3 bucket for build artifacts (30-day lifecycle)
 
 QA and Prod deploy to the **same AWS account** but to separate CloudFormation
@@ -471,9 +525,21 @@ same `--secret-string` shape.
 make pipeline-deploy
 ```
 
-This deploys the `bench-boss-pipeline` stack. The pipeline will start its
-first execution as soon as a commit lands on `main` (or you can manually
-release a change from the console).
+This deploys the `bench-boss-pipeline` stack, including a GitHub CodeStar
+connection. That connection deploys in **PENDING** status — CloudFormation
+can create it, but the OAuth handshake with GitHub has to be completed by a
+human once:
+
+1. AWS Console → **Developer Tools → Settings → Connections**
+2. Click the `bench-boss-pipeline-github` connection → **Update pending connection**
+3. Authorize the AWS Connector for GitHub app against the
+   `marcmaniscalco/BenchBoss` repo (install it on that repo, or your whole account)
+4. Status flips to **Available**
+
+Until that step is done, the pipeline's Source stage will fail. Once the
+connection is available, the pipeline will start its first execution as soon
+as a commit lands on `main` (or you can manually release a change from the
+console).
 
 ### 7.4 Connect each Discord app to its Lambda
 
@@ -546,8 +612,8 @@ fresh execution.
 ### 7.6 Cost
 
 At low commit volume the pipeline is roughly **$2–3/month** (CodePipeline
-flat fee + a handful of build minutes + two Secrets Manager secrets).
-CodeCommit is free for the first 5 active users.
+flat fee + a handful of build minutes + two Secrets Manager secrets). The
+GitHub CodeStar connection itself is free.
 
 ### 7.7 Tearing it all down
 
