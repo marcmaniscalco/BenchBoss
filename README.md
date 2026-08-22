@@ -505,7 +505,9 @@ For automated builds and deploys, this project ships an AWS-native pipeline
 defined in `infrastructure/pipeline.yaml`. The pipeline is a single
 CloudFormation stack that creates:
 
-- A CodeBuild project that runs `ruff`, `pytest --cov`, and `sam build`/`sam package`
+- A CodeBuild project that runs `ruff check`, `ruff format --check`, a
+  `detect-secrets` scan, `pytest --cov`, and `sam build`/`sam package` — a
+  failure in any check fails the build before it deploys anywhere
 - A CodePipeline with five stages:
   1. **Source** — pulls from GitHub (`marcmaniscalco/BenchBoss`, `main` branch) via a
      CodeStar Connections GitHub App connection
@@ -520,6 +522,12 @@ CloudFormation stack that creates:
 QA and Prod deploy to the **same AWS account** but to separate CloudFormation
 stacks, with separate Discord apps/tokens supplied per stage from
 **AWS Secrets Manager**.
+
+> CodeBuild's source is a plain zip snapshot from GitHub (no `.git`
+> directory), so the build can't reuse the `detect-secrets` pre-commit hook
+> directly — that hook shells out to git internally. `check_secrets_baseline.py`
+> at the project root re-scans the build's files against `.secrets.baseline`
+> and fails if anything comes back unaudited, without needing git.
 
 ### 7.1 Create a separate Discord app for QA
 

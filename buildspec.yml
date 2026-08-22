@@ -11,6 +11,8 @@ phases:
   pre_build:
     commands:
       - pipenv run ruff check bench_boss/ tests/
+      - pipenv run ruff format --check bench_boss/ tests/
+      - pipenv run python check_secrets_baseline.py $(find . -type f -not -path './.git/*' -not -name '.secrets.baseline' | sed 's|^\./||')
       - pipenv run pytest tests/ -v --cov=bench_boss --cov-report=term-missing
 
   build:

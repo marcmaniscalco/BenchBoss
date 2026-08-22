@@ -43,9 +43,11 @@ pre-commit-run:
 # ── Secret scanning ───────────────────────────────────────────────────────────
 
 # Regenerate .secrets.baseline after adding new tracked files. New findings
-# still need auditing (see secrets-audit) before they're accepted.
+# still need auditing (see secrets-audit) before they're accepted. Paths are
+# normalized to forward slashes afterwards so the baseline matches on Linux CI.
 secrets-scan:
 	pipenv run detect-secrets scan --baseline .secrets.baseline $$(git ls-files)
+	pipenv run python local/normalize_secrets_baseline.py
 
 # Interactively mark new findings in .secrets.baseline as real secrets or
 # false positives.
