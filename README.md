@@ -274,13 +274,28 @@ This project uses [pre-commit](https://pre-commit.com/) to run lint, format, and
 make pre-commit-install
 ```
 
-The hooks (defined in `.pre-commit-config.yaml`) run ruff lint/format on `bench_boss/` and `tests/`, plus generic checks (trailing whitespace, end-of-file newlines, YAML syntax, large files, merge conflict markers) across the repo. If a hook modifies files, re-stage them and commit again.
+The hooks (defined in `.pre-commit-config.yaml`) run ruff lint/format on `bench_boss/` and `tests/`, [detect-secrets](https://github.com/Yelp/detect-secrets) across the whole repo, plus generic checks (trailing whitespace, end-of-file newlines, YAML syntax, large files, merge conflict markers). If a hook modifies files, re-stage them and commit again.
 
 Run all hooks against the whole repo on demand:
 
 ```powershell
 make pre-commit-run
 ```
+
+#### Secret scanning
+
+`detect-secrets` blocks commits containing likely credentials (API keys, tokens, etc.), checked against the known false positives recorded in `.secrets.baseline`.
+
+If a commit is blocked on a **real** secret, remove it from the file before committing — don't add it to the baseline.
+
+If it's blocked on a **false positive** (e.g. a placeholder value that only looks like a secret), regenerate the baseline and audit the new finding:
+
+```powershell
+make secrets-scan
+make secrets-audit
+```
+
+`secrets-audit` walks you through each new/unreviewed finding interactively — answer **y** if it's safe to commit (not a real secret), **n** if it's an actual secret that needs to be removed instead. Commit the updated `.secrets.baseline` alongside your change.
 
 ### 3.6 Run unit tests
 

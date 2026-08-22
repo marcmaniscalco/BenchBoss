@@ -1,4 +1,4 @@
-.PHONY: install test cov lint lint-fix format pre-commit-install pre-commit-run dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy
+.PHONY: install test cov lint lint-fix format pre-commit-install pre-commit-run secrets-scan secrets-audit dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy
 
 -include .env
 export
@@ -39,6 +39,18 @@ pre-commit-install:
 
 pre-commit-run:
 	pipenv run pre-commit run --all-files
+
+# ── Secret scanning ───────────────────────────────────────────────────────────
+
+# Regenerate .secrets.baseline after adding new tracked files. New findings
+# still need auditing (see secrets-audit) before they're accepted.
+secrets-scan:
+	pipenv run detect-secrets scan --baseline .secrets.baseline $$(git ls-files)
+
+# Interactively mark new findings in .secrets.baseline as real secrets or
+# false positives.
+secrets-audit:
+	pipenv run detect-secrets audit .secrets.baseline
 
 # ── Local DynamoDB ────────────────────────────────────────────────────────────
 

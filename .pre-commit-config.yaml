@@ -18,3 +18,9 @@ repos:
         files: ^(bench_boss|tests)/
       - id: ruff-format
         files: ^(bench_boss|tests)/
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
