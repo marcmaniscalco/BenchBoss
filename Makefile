@@ -1,4 +1,4 @@
-.PHONY: install test cov lint lint-fix format dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy
+.PHONY: install test cov lint lint-fix format pre-commit-install pre-commit-run dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy
 
 -include .env
 export
@@ -11,6 +11,7 @@ PIPELINE_STACK_NAME ?= bench-boss-pipeline
 
 install:
 	pipenv install --dev
+	pipenv run pre-commit install
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,14 @@ lint-fix:
 
 format:
 	pipenv run ruff format bench_boss/ tests/
+
+# ── Pre-commit hooks ──────────────────────────────────────────────────────────
+
+pre-commit-install:
+	pipenv run pre-commit install
+
+pre-commit-run:
+	pipenv run pre-commit run --all-files
 
 # ── Local DynamoDB ────────────────────────────────────────────────────────────
 

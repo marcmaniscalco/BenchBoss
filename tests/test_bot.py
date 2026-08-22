@@ -770,7 +770,6 @@ class TestUpdateChannelMessage:
         mock_logger.warning.assert_called()
 
 
-
 # ---------------------------------------------------------------------------
 # handle_interaction — edge cases
 # ---------------------------------------------------------------------------
@@ -1505,18 +1504,14 @@ class TestEventsInteraction:
         assert result["body"]["data"]["flags"] == 64
 
     def test_success_returns_ephemeral_after_sending_dm(self):
-        with patch(
-            "bench_boss.bot._send_dm_events", return_value=True
-        ) as mock_send:
+        with patch("bench_boss.bot._send_dm_events", return_value=True) as mock_send:
             result = handle_interaction(
                 make_events_body("https://example.com/cal.ics"), bot_token="tok"
             )
         assert result["statusCode"] == 200
         assert result["body"]["data"]["flags"] == 64
         assert "Sent you a DM" in result["body"]["data"]["content"]
-        mock_send.assert_called_once_with(
-            "https://example.com/cal.ics", "user1", "tok"
-        )
+        mock_send.assert_called_once_with("https://example.com/cal.ics", "user1", "tok")
 
     def test_dm_send_failure_returns_ephemeral_error(self):
         with patch("bench_boss.bot._send_dm_events", return_value=False):
@@ -1536,9 +1531,7 @@ class TestEventsInteraction:
                 "options": [{"name": "url", "value": "https://example.com/cal.ics"}],
             },
         }
-        with patch(
-            "bench_boss.bot._send_dm_events", return_value=True
-        ) as mock_send:
+        with patch("bench_boss.bot._send_dm_events", return_value=True) as mock_send:
             handle_interaction(body, bot_token="tok")
         mock_send.assert_called_once_with(
             "https://example.com/cal.ics", "user99", "tok"

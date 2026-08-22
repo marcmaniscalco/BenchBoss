@@ -199,7 +199,7 @@ pip install pipenv
 make install
 ```
 
-This installs all packages from `Pipfile` (including dev dependencies like pytest) and generates `Pipfile.lock`.
+This installs all packages from `Pipfile` (including dev dependencies like pytest) and generates `Pipfile.lock`, then installs the pre-commit git hook (see **3.5**).
 
 ### 3.3 Set up DynamoDB Local
 
@@ -266,7 +266,23 @@ Format code:
 make format
 ```
 
-### 3.5 Run unit tests
+### 3.5 Pre-commit hooks
+
+This project uses [pre-commit](https://pre-commit.com/) to run lint, format, and basic file-hygiene checks automatically before each commit. `make install` already installs the git hook; if you skipped that, install it manually:
+
+```powershell
+make pre-commit-install
+```
+
+The hooks (defined in `.pre-commit-config.yaml`) run ruff lint/format on `bench_boss/` and `tests/`, plus generic checks (trailing whitespace, end-of-file newlines, YAML syntax, large files, merge conflict markers) across the repo. If a hook modifies files, re-stage them and commit again.
+
+Run all hooks against the whole repo on demand:
+
+```powershell
+make pre-commit-run
+```
+
+### 3.6 Run unit tests
 
 ```powershell
 make test
@@ -281,7 +297,7 @@ make cov
 `--cov=bench_boss` measures coverage for the `bench_boss` package only.
 `--cov-report=term-missing` prints which lines are not covered.
 
-### 3.6 Register slash commands with Discord
+### 3.7 Register slash commands with Discord
 
 Run this once (and again whenever you add or change commands). Commands are registered as guild (server-specific) commands for instant availability during development.
 
@@ -497,7 +513,7 @@ Bot Token, and App ID — these are the QA credentials. The production app
 keeps its existing values.
 
 Put the QA values in a `.env.qa` file at the project root (gitignored), then
-register the QA app's slash commands with `make register-qa`. See **3.6**.
+register the QA app's slash commands with `make register-qa`. See **3.7**.
 
 ### 7.2 Create the Secrets Manager secrets
 
