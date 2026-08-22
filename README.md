@@ -702,3 +702,5 @@ interactive GitHub authorization steps):
 
 Once both are done, opening or updating a PR triggers the review
 automatically — no further action needed.
+
+<!-- test: verifying claude-code-review workflow fires on this PR -->
