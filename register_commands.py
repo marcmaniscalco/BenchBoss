@@ -69,6 +69,10 @@ COMMANDS = [
             }
         ],
     },
+    {
+        "name": "create-event",
+        "description": "Create a one-off RSVP event.",
+    },
 ]
 
 url = f"https://discord.com/api/v10/applications/{DISCORD_APP_ID}/guilds/{GUILD_ID}/commands"

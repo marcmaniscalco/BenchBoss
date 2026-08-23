@@ -13,6 +13,7 @@ from bench_boss.dynamo import (
     set_rsvp,
     store_interaction_ref,
     store_message_ref,
+    update_event,
     update_rsvp,
 )
 
@@ -136,6 +137,93 @@ class TestSaveEvent:
         item = mock_table.put_item.call_args[1]["Item"]
         dt = datetime.fromisoformat(item["created_at"])
         assert dt.tzinfo is not None  # timezone-aware
+
+
+# ---------------------------------------------------------------------------
+# update_event
+# ---------------------------------------------------------------------------
+
+
+def _make_existing_event(**overrides) -> dict:
+    base = {
+        "event_key": "key1",
+        "name": "Old Name",
+        "start": START,
+        "end": END,
+        "location": "Old Room",
+        "description": "Old description",
+        "accepted": ["user1"],
+        "declined": [],
+        "tentative": [],
+        "goalie": ["user2"],
+        "member_names": {"user1": "Alice", "user2": "Bob"},
+        "channel_id": "ch1",
+        "message_id": "msg1",
+        "guild_id": "guild1",
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    base.update(overrides)
+    return base
+
+
+NEW_START = "2026-05-01T19:00:00+00:00"
+NEW_END = "2026-05-01T21:00:00+00:00"
+
+
+class TestUpdateEvent:
+    def test_raises_when_event_not_found(self, mock_table):
+        mock_table.get_item.return_value = {}
+        with pytest.raises(ValueError):
+            update_event("missing", "New Name", NEW_START, NEW_END, None, None)
+
+    def test_updates_name_and_start(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event("key1", "New Name", NEW_START, NEW_END, None, None)
+        assert result["name"] == "New Name"
+        assert result["start"] == NEW_START
+
+    def test_updates_end_location_description(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event(
+            "key1", "New Name", NEW_START, NEW_END, "New Room", "New description"
+        )
+        assert result["end"] == NEW_END
+        assert result["location"] == "New Room"
+        assert result["description"] == "New description"
+
+    def test_clears_location_and_description_when_none(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event("key1", "New Name", NEW_START, NEW_END, None, None)
+        assert "location" not in result
+        assert "description" not in result
+
+    def test_clears_end_when_none(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event("key1", "New Name", NEW_START, None, None, None)
+        assert "end" not in result
+
+    def test_recomputes_ttl(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event("key1", "New Name", NEW_START, NEW_END, None, None)
+        assert result["ttl"] == _ttl_timestamp(NEW_END, NEW_START)
+
+    def test_preserves_rsvp_state(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event("key1", "New Name", NEW_START, NEW_END, None, None)
+        assert result["accepted"] == ["user1"]
+        assert result["goalie"] == ["user2"]
+        assert result["member_names"] == {"user1": "Alice", "user2": "Bob"}
+
+    def test_preserves_channel_and_message_refs(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        result = update_event("key1", "New Name", NEW_START, NEW_END, None, None)
+        assert result["channel_id"] == "ch1"
+        assert result["message_id"] == "msg1"
+
+    def test_saves_updated_event_to_dynamo(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_existing_event()}
+        update_event("key1", "New Name", NEW_START, NEW_END, None, None)
+        mock_table.put_item.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

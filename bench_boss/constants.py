@@ -1,3 +1,4 @@
 EVENT_TTL_HOURS = 4
 MESSAGE_FETCH_DELAY = 0.5
 FULLTIME_ROLE_ID = "1085056467763208253"
+TEAM_TIMEZONE = "America/New_York"  # update to the team's actual timezone

@@ -338,10 +338,11 @@ DISCORD_PUBLIC_KEY=your-qa-public-key
 
 Expected output:
 ```
-Registered 3 command(s) for qa:
+Registered 4 command(s) for qa:
   /ping — Check if the bot is alive.
   /schedule — Show upcoming calendar events for the next 7 days.
   /events — DM you a list of all events from a calendar.
+  /create-event — Create a one-off RSVP event.
 ```
 
 ---
@@ -422,6 +423,17 @@ When a user RSVPs via any button (accepted / declined / tentative) or is added v
 
 - **Role present** → name is stored and displayed as-is.
 - **Role absent** → the display name is stored with a `*` suffix (e.g. `Jane*`) so admins can see at a glance who is not a fulltime member.
+
+### Creating and Editing RSVP Events
+
+`/create-event` opens a modal to post a one-off RSVP event that isn't on a subscribed calendar (e.g. a pickup game). Every event embed also has an **Edit** button (admin-only, same Administrator-permission check as **Delete**) that reopens the same modal pre-filled with the event's current values and saves changes in place.
+
+Discord modals only support plain text inputs — there's no date picker — so the modal has exactly the 5 fields Discord allows:
+
+- **Title**, **Duration (minutes)**, **Location**, **Description** — free text.
+- **Date & Time** — typed as `YYYY-MM-DD H:MM AM/PM` (e.g. `2026-08-30 7:00 PM`) and interpreted in the `TEAM_TIMEZONE` constant in `bench_boss/constants.py`. Update that constant to match your team's actual timezone.
+
+The **Description** field is auto-detected: an `http://`/`https://` value renders as the same "Game Details" link calendar-sourced events use; anything else renders as plain text.
 
 ---
 

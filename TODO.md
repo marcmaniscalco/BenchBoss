@@ -4,7 +4,7 @@
 
 ## Features
 - [ ] Support scheduling multiple upcoming events (currently only posts the next one)
-- [ ] Edit / reschedule an existing event
+- [X] Edit / reschedule an existing event
 - [ ] Reminder notifications before event start
 - [ ] Automatically delete expired events and recreate recurring ones without significant cost increase (investigate EventBridge Scheduler or DynamoDB TTL-triggered Lambda)
 

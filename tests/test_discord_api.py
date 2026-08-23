@@ -5,6 +5,7 @@ from bench_boss.discord_api import (
     _build_gcal_url,
     build_add_rsvp_modal,
     build_event_embed,
+    build_event_modal,
     build_no_events_embed,
     build_remove_rsvp_modal,
     build_rsvp_components,
@@ -77,6 +78,20 @@ class TestBuildEventEmbed:
         embed = build_event_embed("Event", START, None, None, None, [], [], [])
         field_names = [f["name"] for f in embed["fields"]]
         assert not any("📋" in n for n in field_names)
+
+    def test_plain_text_description_renders_as_plain_text(self):
+        embed = build_event_embed(
+            "Event", START, None, None, "Bring your own gear", [], [], []
+        )
+        details_field = next(f for f in embed["fields"] if "📋" in f["name"])
+        assert details_field["value"] == "Bring your own gear"
+
+    def test_http_description_still_renders_as_link(self):
+        embed = build_event_embed(
+            "Event", START, None, None, "http://example.com/game", [], [], []
+        )
+        details_field = next(f for f in embed["fields"] if "📋" in f["name"])
+        assert details_field["value"] == "[Game Details](http://example.com/game)"
 
     def test_rsvp_fields_show_zero_counts_when_empty(self):
         embed = build_event_embed("Event", START, None, None, None, [], [], [])
@@ -318,9 +333,9 @@ class TestBuildRsvpComponents:
         components = build_rsvp_components("key1")
         assert len(components[0]["components"]) == 4
 
-    def test_row2_has_three_buttons(self):
+    def test_row2_has_four_buttons(self):
         components = build_rsvp_components("key1")
-        assert len(components[1]["components"]) == 3
+        assert len(components[1]["components"]) == 4
 
     def test_row1_custom_ids(self):
         components = build_rsvp_components("key1")
@@ -335,12 +350,21 @@ class TestBuildRsvpComponents:
     def test_row2_custom_ids(self):
         components = build_rsvp_components("key1")
         custom_ids = {btn["custom_id"] for btn in components[1]["components"]}
-        assert custom_ids == {"add_rsvp:key1", "remove_rsvp:key1", "delete:key1"}
+        assert custom_ids == {
+            "add_rsvp:key1",
+            "remove_rsvp:key1",
+            "edit_event:key1",
+            "delete:key1",
+        }
 
-    def test_no_edit_button(self):
+    def test_edit_button_has_primary_style(self):
         components = build_rsvp_components("key1")
-        all_ids = [btn["custom_id"] for row in components for btn in row["components"]]
-        assert not any("edit:" in cid for cid in all_ids)
+        edit_btn = next(
+            b
+            for b in components[1]["components"]
+            if b["custom_id"] == "edit_event:key1"
+        )
+        assert edit_btn["style"] == 1
 
     def test_delete_button_has_danger_style(self):
         components = build_rsvp_components("key1")
@@ -491,3 +515,89 @@ class TestBuildRemoveRsvpModal:
         }
         assert "user" in input_ids
         assert "action" not in input_ids
+
+
+class TestBuildEventModal:
+    def _input_ids(self, modal):
+        return {
+            comp["custom_id"]
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+
+    def test_create_custom_id_has_no_event_key(self):
+        modal = build_event_modal()
+        assert modal["custom_id"] == "create_event_modal"
+
+    def test_create_title(self):
+        modal = build_event_modal()
+        assert modal["title"] == "Create Event"
+
+    def test_edit_custom_id_contains_event_key(self):
+        modal = build_event_modal("key1")
+        assert modal["custom_id"] == "edit_event_modal:key1"
+
+    def test_edit_title(self):
+        modal = build_event_modal("key1")
+        assert modal["title"] == "Edit Event"
+
+    def test_has_all_five_fields(self):
+        modal = build_event_modal()
+        assert self._input_ids(modal) == {
+            "name",
+            "datetime",
+            "duration",
+            "location",
+            "description",
+        }
+
+    def test_at_most_five_action_rows(self):
+        modal = build_event_modal()
+        assert len(modal["components"]) == 5
+
+    def test_name_datetime_duration_required(self):
+        modal = build_event_modal()
+        required = {
+            comp["custom_id"]: comp["required"]
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert required["name"] is True
+        assert required["datetime"] is True
+        assert required["duration"] is True
+        assert required["location"] is False
+        assert required["description"] is False
+
+    def test_no_prefill_has_no_values(self):
+        modal = build_event_modal()
+        for row in modal["components"]:
+            for comp in row["components"]:
+                assert "value" not in comp
+
+    def test_prefill_populates_matching_fields(self):
+        prefill = {
+            "name": "Scrimmage",
+            "datetime": "2026-08-30 07:00 PM",
+            "duration": "90",
+            "location": "Rink 1",
+            "description": "Bring pads",
+        }
+        modal = build_event_modal("key1", prefill=prefill)
+        values = {
+            comp["custom_id"]: comp["value"]
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert values == prefill
+
+    def test_prefill_skips_empty_values(self):
+        prefill = {"name": "Scrimmage", "location": "", "description": ""}
+        modal = build_event_modal("key1", prefill=prefill)
+        components = {
+            comp["custom_id"]: comp
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert components["name"]["value"] == "Scrimmage"
+        assert "value" not in components["location"]
+        assert "value" not in components["description"]

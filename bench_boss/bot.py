@@ -4,17 +4,19 @@ Core bot logic.
 
 import logging
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 from nacl.signing import VerifyKey
 
 from bench_boss.calendar import WebCalReader
-from bench_boss.constants import FULLTIME_ROLE_ID
+from bench_boss.constants import FULLTIME_ROLE_ID, TEAM_TIMEZONE
 from bench_boss.discord_api import (
     build_add_rsvp_modal,
     build_delete_confirm_buttons,
     build_event_embed,
+    build_event_modal,
     build_remove_rsvp_modal,
     build_rsvp_components,
 )
@@ -29,6 +31,7 @@ from bench_boss.dynamo import (
     set_rsvp,
     store_interaction_ref,
     store_message_ref,
+    update_event,
     update_rsvp,
 )
 
@@ -114,6 +117,12 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             }
             return _handle_events(options.get("url", ""), body, bot_token)
 
+        if command == "create-event":
+            return {
+                "statusCode": 200,
+                "body": {"type": MODAL, "data": build_event_modal()},
+            }
+
         return {
             "statusCode": 200,
             "body": {
@@ -136,6 +145,8 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             return _handle_remove_rsvp_button(body)
         if custom_id.startswith("goalie_rsvp:"):
             return _handle_goalie_rsvp(body)
+        if custom_id.startswith("edit_event:"):
+            return _handle_edit_event_button(body)
         return _handle_rsvp(body)
 
     if interaction_type == MODAL_SUBMIT:
@@ -144,6 +155,10 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             "remove_rsvp_modal:"
         ):
             return _handle_rsvp_edit_submit(body, bot_token)
+        if custom_id == "create_event_modal":
+            return _handle_create_event_submit(body)
+        if custom_id.startswith("edit_event_modal:"):
+            return _handle_edit_event_submit(body, bot_token)
         return {"statusCode": 400, "body": {"error": "Unhandled modal submission"}}
 
     return {"statusCode": 400, "body": {"error": "Unhandled interaction type"}}
@@ -391,6 +406,38 @@ def _handle_remove_rsvp_button(body: dict) -> dict:
     }
 
 
+def _handle_edit_event_button(body: dict) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("You don't have permission to edit events.")
+
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    event = get_event(event_key)
+    if event is None:
+        return _ephemeral("Event not found.")
+
+    _store_button_refs(body, event_key)
+
+    start = datetime.fromisoformat(event["start"])
+    end = datetime.fromisoformat(event["end"]) if event.get("end") else None
+    duration = str(int((end - start).total_seconds() // 60)) if end else ""
+
+    prefill = {
+        "name": event["name"],
+        "datetime": _format_event_datetime(start),
+        "duration": duration,
+        "location": event.get("location", ""),
+        "description": event.get("description", ""),
+    }
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": MODAL,
+            "data": build_event_modal(event_key, prefill=prefill),
+        },
+    }
+
+
 def _handle_goalie_rsvp(body: dict) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     member = body.get("member") or {}
@@ -465,6 +512,77 @@ def _parse_user_id(value: str) -> str | None:
     return value if value.isdigit() else None
 
 
+_EVENT_DATETIME_FORMAT = "%Y-%m-%d %I:%M %p"
+
+
+def _parse_event_datetime(raw: str) -> datetime | None:
+    """Parse a 'YYYY-MM-DD H:MM AM/PM' string into a TEAM_TIMEZONE-aware datetime."""
+    try:
+        naive = datetime.strptime(raw.strip(), _EVENT_DATETIME_FORMAT)
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=ZoneInfo(TEAM_TIMEZONE))
+
+
+def _format_event_datetime(dt: datetime) -> str:
+    """Format a datetime back into the modal's expected input string."""
+    return dt.astimezone(ZoneInfo(TEAM_TIMEZONE)).strftime(_EVENT_DATETIME_FORMAT)
+
+
+def _parse_duration_minutes(raw: str) -> int | None:
+    """Parse a positive integer number of minutes, or None if invalid."""
+    try:
+        minutes = int(raw.strip())
+    except ValueError:
+        return None
+    return minutes if minutes > 0 else None
+
+
+def _extract_modal_fields(body: dict) -> dict:
+    """Flatten a modal submission's nested action-row components into a dict."""
+    return {
+        comp["custom_id"]: comp["value"]
+        for row in body.get("data", {}).get("components", [])
+        for comp in row.get("components", [])
+    }
+
+
+def _parse_event_modal_fields(fields: dict) -> tuple[dict | None, str | None]:
+    """
+    Validate and parse the create/edit event modal fields.
+
+    Returns (parsed, None) on success, where parsed has keys
+    name/start/end/location/description, or (None, error_message) on
+    validation failure.
+    """
+    name = fields.get("name", "").strip()
+    if not name:
+        return None, "Title is required."
+
+    start = _parse_event_datetime(fields.get("datetime", ""))
+    if start is None:
+        return None, (
+            "Could not parse date/time — use format YYYY-MM-DD H:MM AM/PM "
+            "(e.g. 2026-08-30 7:00 PM)."
+        )
+
+    duration = _parse_duration_minutes(fields.get("duration", ""))
+    if duration is None:
+        return None, "Duration must be a positive number of minutes."
+
+    end = start + timedelta(minutes=duration)
+    location = fields.get("location", "").strip() or None
+    description = fields.get("description", "").strip() or None
+
+    return {
+        "name": name,
+        "start": start,
+        "end": end,
+        "location": location,
+        "description": description,
+    }, None
+
+
 def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | None:
     """Search a guild for a member by username. Returns the user ID or None."""
     resp = requests.get(
@@ -523,11 +641,7 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     custom_id = body.get("data", {}).get("custom_id", "")
     modal_type, event_key = custom_id.split(":", 1)
 
-    fields = {
-        comp["custom_id"]: comp["value"]
-        for row in body.get("data", {}).get("components", [])
-        for comp in row.get("components", [])
-    }
+    fields = _extract_modal_fields(body)
 
     raw_user = fields.get("user", "").strip()
     user_id = _parse_user_id(raw_user)
@@ -619,6 +733,82 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     if bot_token:
         _update_channel_message(event, bot_token)
     return _ephemeral(f"Removed **{display_name or user_id}** from the RSVP.")
+
+
+def _handle_create_event_submit(body: dict) -> dict:
+    fields = _extract_modal_fields(body)
+    parsed, error = _parse_event_modal_fields(fields)
+    if error:
+        return _ephemeral(error)
+
+    event_key = str(uuid.uuid4())
+
+    try:
+        save_event(
+            event_key=event_key,
+            name=parsed["name"],
+            start=_ensure_utc_iso(parsed["start"]),
+            end=_ensure_utc_iso(parsed["end"]),
+            location=parsed["location"],
+            description=parsed["description"],
+            guild_id=body.get("guild_id"),
+            channel_id=body.get("channel_id") or None,
+        )
+        logger.info("Created event %r (key=%s)", parsed["name"], event_key)
+    except Exception as e:
+        logger.error("Failed to save event: %s", e)
+        return _ephemeral(f"Failed to create event: {e}")
+
+    embed = build_event_embed(
+        name=parsed["name"],
+        start=parsed["start"],
+        end=parsed["end"],
+        location=parsed["location"],
+        description=parsed["description"],
+        accepted=[],
+        declined=[],
+        tentative=[],
+        goalie=[],
+    )
+    components = build_rsvp_components(event_key)
+
+    # message_id is captured lazily on the first button click, same as
+    # calendar-sourced events — see the comment in _handle_schedule.
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {"embeds": [embed], "components": components},
+        },
+    }
+
+
+def _handle_edit_event_submit(body: dict, bot_token: str) -> dict:
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    fields = _extract_modal_fields(body)
+    parsed, error = _parse_event_modal_fields(fields)
+    if error:
+        return _ephemeral(error)
+
+    try:
+        event = update_event(
+            event_key,
+            name=parsed["name"],
+            start=_ensure_utc_iso(parsed["start"]),
+            end=_ensure_utc_iso(parsed["end"]),
+            location=parsed["location"],
+            description=parsed["description"],
+        )
+        logger.info("Updated event %s", event_key)
+    except ValueError:
+        return _ephemeral("Event not found.")
+    except Exception as e:
+        logger.error("Failed to update event %s: %s", event_key, e)
+        return _ephemeral(f"Failed to update event: {e}")
+
+    if bot_token:
+        _update_channel_message(event, bot_token)
+    return _ephemeral(f"Updated **{parsed['name']}**.")
 
 
 def _update_channel_message(event: dict, bot_token: str) -> None:

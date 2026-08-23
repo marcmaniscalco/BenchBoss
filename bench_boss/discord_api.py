@@ -121,10 +121,13 @@ def build_event_embed(
     if location:
         fields.append({"name": "📍 Where", "value": location, "inline": False})
     if description:
+        is_link = description.startswith("http://") or description.startswith(
+            "https://"
+        )
         fields.append(
             {
                 "name": "📋 Details",
-                "value": f"[Game Details]({description})",
+                "value": f"[Game Details]({description})" if is_link else description,
                 "inline": False,
             }
         )
@@ -189,6 +192,13 @@ def build_rsvp_components(event_key: str) -> list[dict]:
             "style": 4,  # DANGER (red)
             "emoji": {"name": "➖"},
             "custom_id": f"remove_rsvp:{event_key}",
+        },
+        {
+            "type": 2,
+            "style": 1,  # PRIMARY (blue)
+            "emoji": {"name": "✏️"},
+            "label": "Edit",
+            "custom_id": f"edit_event:{event_key}",
         },
         {
             "type": 2,
@@ -301,3 +311,67 @@ def build_remove_rsvp_modal(event_key: str) -> dict:
             },
         ],
     }
+
+
+_EVENT_MODAL_FIELDS = [
+    {
+        "custom_id": "name",
+        "label": "Title",
+        "style": 1,  # SHORT
+        "required": True,
+        "max_length": 256,
+    },
+    {
+        "custom_id": "datetime",
+        "label": "Date & Time",
+        "style": 1,  # SHORT
+        "required": True,
+        "placeholder": "YYYY-MM-DD H:MM AM/PM, e.g. 2026-08-30 7:00 PM",
+        "max_length": 25,
+    },
+    {
+        "custom_id": "duration",
+        "label": "Duration (minutes)",
+        "style": 1,  # SHORT
+        "required": True,
+        "placeholder": "e.g. 90",
+        "max_length": 6,
+    },
+    {
+        "custom_id": "location",
+        "label": "Location",
+        "style": 1,  # SHORT
+        "required": False,
+        "max_length": 100,
+    },
+    {
+        "custom_id": "description",
+        "label": "Description",
+        "style": 2,  # PARAGRAPH
+        "required": False,
+        "max_length": 1000,
+    },
+]
+
+
+def build_event_modal(
+    event_key: str | None = None, prefill: dict | None = None
+) -> dict:
+    """
+    Return the modal data for creating (event_key=None) or editing an event.
+
+    `prefill`, if given, is a flat dict keyed by the same custom_ids used
+    below (name/datetime/duration/location/description) whose values are
+    used to pre-populate the corresponding text input.
+    """
+    custom_id = f"edit_event_modal:{event_key}" if event_key else "create_event_modal"
+    title = "Edit Event" if event_key else "Create Event"
+
+    components = []
+    for field in _EVENT_MODAL_FIELDS:
+        text_input = {"type": 4, **field}  # TEXT_INPUT
+        if prefill and prefill.get(field["custom_id"]):
+            text_input["value"] = prefill[field["custom_id"]]
+        components.append({"type": 1, "components": [text_input]})
+
+    return {"custom_id": custom_id, "title": title, "components": components}

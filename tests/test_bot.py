@@ -18,6 +18,8 @@ from bench_boss.bot import (
     _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
+    _parse_duration_minutes,
+    _parse_event_datetime,
     _send_dm_events,
     _update_channel_message,
     handle_interaction,
@@ -221,7 +223,7 @@ class TestScheduleInteraction:
         components = result["body"]["data"]["components"]
         assert len(components) == 2
         assert len(components[0]["components"]) == 4
-        assert len(components[1]["components"]) == 3
+        assert len(components[1]["components"]) == 4
 
     def test_only_next_event_is_used(self):
         events = [
@@ -1671,3 +1673,313 @@ class TestFormatEventLine:
         line = _format_event_line(ev)
         assert "All day" in line
         assert "All Day" in line
+
+
+class TestParseEventDatetime:
+    def test_parses_valid_datetime(self):
+        dt = _parse_event_datetime("2026-08-30 7:00 PM")
+        assert dt is not None
+        assert (dt.year, dt.month, dt.day, dt.hour, dt.minute) == (
+            2026,
+            8,
+            30,
+            19,
+            0,
+        )
+        assert dt.tzinfo is not None
+
+    def test_strips_whitespace(self):
+        assert _parse_event_datetime("  2026-08-30 7:00 PM  ") is not None
+
+    def test_invalid_format_returns_none(self):
+        assert _parse_event_datetime("not a date") is None
+
+    def test_missing_ampm_returns_none(self):
+        assert _parse_event_datetime("2026-08-30 19:00") is None
+
+
+class TestParseDurationMinutes:
+    def test_parses_positive_int(self):
+        assert _parse_duration_minutes("90") == 90
+
+    def test_strips_whitespace(self):
+        assert _parse_duration_minutes(" 90 ") == 90
+
+    def test_zero_returns_none(self):
+        assert _parse_duration_minutes("0") is None
+
+    def test_negative_returns_none(self):
+        assert _parse_duration_minutes("-5") is None
+
+    def test_non_numeric_returns_none(self):
+        assert _parse_duration_minutes("soon") is None
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — /create-event command
+# ---------------------------------------------------------------------------
+
+
+class TestCreateEventCommand:
+    def test_returns_modal(self):
+        body = {
+            "type": APPLICATION_COMMAND,
+            "data": {"name": "create-event"},
+        }
+        result = handle_interaction(body)
+        assert result["body"]["type"] == MODAL
+
+    def test_modal_custom_id_is_create_event_modal(self):
+        body = {
+            "type": APPLICATION_COMMAND,
+            "data": {"name": "create-event"},
+        }
+        result = handle_interaction(body)
+        assert result["body"]["data"]["custom_id"] == "create_event_modal"
+
+    def test_modal_has_no_prefilled_values(self):
+        body = {
+            "type": APPLICATION_COMMAND,
+            "data": {"name": "create-event"},
+        }
+        result = handle_interaction(body)
+        for row in result["body"]["data"]["components"]:
+            for comp in row["components"]:
+                assert "value" not in comp
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — Edit button
+# ---------------------------------------------------------------------------
+
+
+def make_edit_event_body(
+    event_key: str,
+    channel_id: str = "ch1",
+    message_id: str = "m1",
+    token: str = "tok1",
+    app_id: str = "app1",
+    permissions: str = "8",  # 8 = Administrator bit
+) -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "channel_id": channel_id,
+        "message": {"id": message_id},
+        "token": token,
+        "application_id": app_id,
+        "member": {"user": {"id": "user1"}, "permissions": permissions},
+        "data": {"custom_id": f"edit_event:{event_key}"},
+    }
+
+
+class TestEditEventButton:
+    def test_rejected_for_non_admin(self):
+        result = handle_interaction(make_edit_event_body("key1", permissions="0"))
+        assert result["body"]["data"]["flags"] == 64
+        assert "permission" in result["body"]["data"]["content"].lower()
+
+    def test_event_not_found_returns_ephemeral(self):
+        with patch("bench_boss.bot.get_event", return_value=None):
+            result = handle_interaction(make_edit_event_body("missing"))
+        assert result["body"]["data"]["flags"] == 64
+        assert "not found" in result["body"]["data"]["content"].lower()
+
+    def test_returns_modal_prefilled(self):
+        event = make_stored_event(name="Team Standup", location="Room 1")
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            result = handle_interaction(make_edit_event_body("test-key"))
+        assert result["body"]["type"] == MODAL
+        assert result["body"]["data"]["custom_id"] == "edit_event_modal:test-key"
+        values = {
+            comp["custom_id"]: comp["value"]
+            for row in result["body"]["data"]["components"]
+            for comp in row["components"]
+            if "value" in comp
+        }
+        assert values["name"] == "Team Standup"
+        assert values["location"] == "Room 1"
+        assert values["duration"] == "60"
+
+    def test_stores_message_and_interaction_refs(self):
+        event = make_stored_event()
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.store_message_ref") as mock_msg,
+            patch("bench_boss.bot.store_interaction_ref") as mock_iref,
+        ):
+            handle_interaction(
+                make_edit_event_body(
+                    "test-key",
+                    channel_id="ch42",
+                    message_id="msg99",
+                    token="mytoken",
+                    app_id="myapp",
+                )
+            )
+        mock_msg.assert_called_once_with("test-key", "ch42", "msg99")
+        mock_iref.assert_called_once_with("test-key", "mytoken", "myapp")
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — create/edit event modal submit
+# ---------------------------------------------------------------------------
+
+
+def make_event_modal_submit_body(custom_id: str, **fields) -> dict:
+    defaults = {
+        "name": "Scrimmage",
+        "datetime": "2026-08-30 07:00 PM",
+        "duration": "90",
+        "location": "Rink 1",
+        "description": "Bring pads",
+    }
+    defaults.update(fields)
+    return {
+        "type": MODAL_SUBMIT,
+        "guild_id": "guild1",
+        "channel_id": "ch1",
+        "data": {
+            "custom_id": custom_id,
+            "components": [
+                {"type": 1, "components": [{"type": 4, "custom_id": k, "value": v}]}
+                for k, v in defaults.items()
+            ],
+        },
+    }
+
+
+class TestCreateEventModalSubmit:
+    def test_valid_submission_calls_save_event(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+        mock_save.assert_called_once()
+        kwargs = mock_save.call_args[1]
+        assert kwargs["name"] == "Scrimmage"
+        assert kwargs["location"] == "Rink 1"
+        assert kwargs["description"] == "Bring pads"
+        assert kwargs["guild_id"] == "guild1"
+        assert kwargs["channel_id"] == "ch1"
+        assert "webcal_url" not in kwargs
+
+    def test_valid_submission_parses_start_and_end_90_minutes_apart(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+        kwargs = mock_save.call_args[1]
+        start = datetime.fromisoformat(kwargs["start"])
+        end = datetime.fromisoformat(kwargs["end"])
+        assert (end - start) == timedelta(minutes=90)
+
+    def test_valid_submission_returns_channel_message_with_embed(self):
+        with patch("bench_boss.bot.save_event"):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["embeds"][0]["title"] == "Scrimmage"
+        assert "components" in result["body"]["data"]
+
+    def test_blank_title_returns_ephemeral_error(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal", name="  "),
+                bot_token="tok",
+            )
+        mock_save.assert_not_called()
+        assert result["body"]["data"]["flags"] == 64
+        assert "title" in result["body"]["data"]["content"].lower()
+
+    def test_bad_datetime_returns_ephemeral_error(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            result = handle_interaction(
+                make_event_modal_submit_body(
+                    "create_event_modal", datetime="not a date"
+                ),
+                bot_token="tok",
+            )
+        mock_save.assert_not_called()
+        assert result["body"]["data"]["flags"] == 64
+        assert "date/time" in result["body"]["data"]["content"].lower()
+
+    def test_bad_duration_returns_ephemeral_error(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal", duration="soon"),
+                bot_token="tok",
+            )
+        mock_save.assert_not_called()
+        assert result["body"]["data"]["flags"] == 64
+        assert "duration" in result["body"]["data"]["content"].lower()
+
+    def test_negative_duration_returns_ephemeral_error(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal", duration="-5"),
+                bot_token="tok",
+            )
+        mock_save.assert_not_called()
+        assert result["body"]["data"]["flags"] == 64
+
+    def test_blank_location_and_description_are_omitted(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            handle_interaction(
+                make_event_modal_submit_body(
+                    "create_event_modal", location="  ", description=""
+                ),
+                bot_token="tok",
+            )
+        kwargs = mock_save.call_args[1]
+        assert kwargs["location"] is None
+        assert kwargs["description"] is None
+
+
+class TestEditEventModalSubmit:
+    def test_valid_submission_updates_and_confirms(self):
+        with (
+            patch("bench_boss.bot.update_event") as mock_update,
+            patch("bench_boss.bot._update_channel_message") as mock_refresh,
+        ):
+            mock_update.return_value = make_stored_event(name="Scrimmage")
+            result = handle_interaction(
+                make_event_modal_submit_body("edit_event_modal:test-key"),
+                bot_token="tok",
+            )
+        mock_update.assert_called_once()
+        args = mock_update.call_args[0]
+        kwargs = mock_update.call_args[1]
+        assert args[0] == "test-key"
+        assert kwargs["name"] == "Scrimmage"
+        assert kwargs["location"] == "Rink 1"
+        mock_refresh.assert_called_once_with(mock_update.return_value, "tok")
+        assert result["body"]["data"]["flags"] == 64
+        assert "Scrimmage" in result["body"]["data"]["content"]
+
+    def test_event_not_found_returns_ephemeral(self):
+        with patch("bench_boss.bot.update_event", side_effect=ValueError()):
+            result = handle_interaction(
+                make_event_modal_submit_body("edit_event_modal:missing"),
+                bot_token="tok",
+            )
+        assert result["body"]["data"]["flags"] == 64
+        assert "not found" in result["body"]["data"]["content"].lower()
+
+    def test_bad_datetime_does_not_call_update_event(self):
+        with patch("bench_boss.bot.update_event") as mock_update:
+            result = handle_interaction(
+                make_event_modal_submit_body(
+                    "edit_event_modal:test-key", datetime="garbage"
+                ),
+                bot_token="tok",
+            )
+        mock_update.assert_not_called()
+        assert result["body"]["data"]["flags"] == 64

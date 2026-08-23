@@ -77,6 +77,40 @@ def save_event(
     _table().put_item(Item=item)
 
 
+def update_event(
+    event_key: str,
+    name: str,
+    start: str,
+    end: str | None,
+    location: str | None,
+    description: str | None,
+) -> dict:
+    """Update an existing event's editable fields, preserving RSVP state."""
+    event = get_event(event_key)
+    if event is None:
+        logger.warning("Event not found: %s", event_key)
+        raise ValueError(f"Event {event_key!r} not found")
+
+    event["name"] = name
+    event["start"] = start
+    if end is not None:
+        event["end"] = end
+    else:
+        event.pop("end", None)
+    if location is not None:
+        event["location"] = location
+    else:
+        event.pop("location", None)
+    if description is not None:
+        event["description"] = description
+    else:
+        event.pop("description", None)
+    event["ttl"] = _ttl_timestamp(end, start)
+
+    _table().put_item(Item=event)
+    return event
+
+
 def find_event_in_channel(channel_id: str, name: str, start: str) -> dict | None:
     """Return an active event in the channel with the same name and start, or None."""
     resp = _table().scan(
