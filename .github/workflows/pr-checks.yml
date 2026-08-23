@@ -1,0 +1,35 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip pipenv
+          pipenv install --dev
+
+      - name: Lint
+        run: pipenv run ruff check bench_boss/ tests/
+
+      - name: Format check
+        run: pipenv run ruff format --check bench_boss/ tests/
+
+      - name: Secrets scan
+        run: >-
+          pipenv run python check_secrets_baseline.py
+          $(find . -type f -not -path './.git/*' -not -path './.ruff_cache/*'
+          -not -name '.secrets.baseline' -not -name 'Pipfile.lock' | sed 's|^\./||')
+
+      - name: Tests
+        run: pipenv run pytest tests/ -v --cov=bench_boss --cov-report=term-missing
