@@ -427,7 +427,7 @@ When a user RSVPs via any button (accepted / declined / tentative) or is added v
 
 ### Creating and Editing RSVP Events
 
-`/create-event` opens a modal to post a one-off RSVP event that isn't on a subscribed calendar (e.g. a pickup game). Every event embed also has an **Edit** button (admin-only, same Administrator-permission check as **Delete**) that reopens the same modal pre-filled with the event's current values and saves changes in place.
+`/create-event` opens a modal to post a one-off RSVP event that isn't on a subscribed calendar (e.g. a pickup game). Every event embed also has an **Edit** button that reopens the same modal pre-filled with the event's current values and saves changes in place — usable by admins (same Administrator-permission check as **Delete**) **or** whoever originally created the event via `/create-event`. Events pulled in from a subscribed calendar have no creator, so only admins can edit those.
 
 Discord modals only support plain text inputs — there's no date picker — so the modal has exactly the 5 fields Discord allows:
 

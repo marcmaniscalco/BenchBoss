@@ -125,6 +125,16 @@ class TestSaveEvent:
         item = mock_table.put_item.call_args[1]["Item"]
         assert "channel_id" not in item
 
+    def test_stores_created_by_when_provided(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None, created_by="user1")
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["created_by"] == "user1"
+
+    def test_omits_created_by_when_none(self, mock_table):
+        save_event("key1", "My Event", START, None, None, None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "created_by" not in item
+
     def test_stores_created_at_field(self, mock_table):
         save_event("key1", "My Event", START, None, None, None)
         item = mock_table.put_item.call_args[1]["Item"]

@@ -69,6 +69,13 @@ def _is_admin(body: dict) -> bool:
         return False
 
 
+def _get_user_id(body: dict) -> str:
+    """Extract the interacting user's ID from a guild member or DM context."""
+    member = body.get("member") or {}
+    user_data = member.get("user") or body.get("user") or {}
+    return user_data.get("id", "")
+
+
 def verify_signature(
     raw_body: bytes, signature: str, timestamp: str, public_key: str
 ) -> bool:
@@ -407,13 +414,16 @@ def _handle_remove_rsvp_button(body: dict) -> dict:
 
 
 def _handle_edit_event_button(body: dict) -> dict:
-    if not _is_admin(body):
-        return _ephemeral("You don't have permission to edit events.")
-
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     event = get_event(event_key)
     if event is None:
         return _ephemeral("Event not found.")
+
+    is_creator = bool(event.get("created_by")) and event["created_by"] == _get_user_id(
+        body
+    )
+    if not _is_admin(body) and not is_creator:
+        return _ephemeral("You don't have permission to edit this event.")
 
     _store_button_refs(body, event_key)
 
@@ -753,6 +763,7 @@ def _handle_create_event_submit(body: dict) -> dict:
             description=parsed["description"],
             guild_id=body.get("guild_id"),
             channel_id=body.get("channel_id") or None,
+            created_by=_get_user_id(body) or None,
         )
         logger.info("Created event %r (key=%s)", parsed["name"], event_key)
     except Exception as e:

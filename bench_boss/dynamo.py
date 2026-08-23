@@ -48,6 +48,7 @@ def save_event(
     guild_id: str | None = None,
     webcal_url: str | None = None,
     channel_id: str | None = None,
+    created_by: str | None = None,
 ) -> None:
     """Persist a new event with empty RSVP lists."""
     logger.debug("Saving event %s (%r)", event_key, name)
@@ -74,6 +75,8 @@ def save_event(
         item["webcal_url"] = webcal_url
     if channel_id is not None:
         item["channel_id"] = channel_id
+    if created_by is not None:
+        item["created_by"] = created_by
     _table().put_item(Item=item)
 
 

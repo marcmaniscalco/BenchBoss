@@ -18,6 +18,7 @@ from bench_boss.bot import (
     _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
+    _get_user_id,
     _parse_duration_minutes,
     _parse_event_datetime,
     _send_dm_events,
@@ -1715,6 +1716,23 @@ class TestParseDurationMinutes:
         assert _parse_duration_minutes("soon") is None
 
 
+class TestGetUserId:
+    def test_extracts_from_guild_member(self):
+        body = {"member": {"user": {"id": "user1"}}}
+        assert _get_user_id(body) == "user1"
+
+    def test_extracts_from_dm_user(self):
+        body = {"user": {"id": "user2"}}
+        assert _get_user_id(body) == "user2"
+
+    def test_prefers_member_over_top_level_user(self):
+        body = {"member": {"user": {"id": "user1"}}, "user": {"id": "user2"}}
+        assert _get_user_id(body) == "user1"
+
+    def test_returns_empty_string_when_missing(self):
+        assert _get_user_id({}) == ""
+
+
 # ---------------------------------------------------------------------------
 # handle_interaction — /create-event command
 # ---------------------------------------------------------------------------
@@ -1773,8 +1791,9 @@ def make_edit_event_body(
 
 
 class TestEditEventButton:
-    def test_rejected_for_non_admin(self):
-        result = handle_interaction(make_edit_event_body("key1", permissions="0"))
+    def test_rejected_for_non_admin_non_creator(self):
+        with patch("bench_boss.bot.get_event", return_value=make_stored_event()):
+            result = handle_interaction(make_edit_event_body("key1", permissions="0"))
         assert result["body"]["data"]["flags"] == 64
         assert "permission" in result["body"]["data"]["content"].lower()
 
@@ -1783,6 +1802,27 @@ class TestEditEventButton:
             result = handle_interaction(make_edit_event_body("missing"))
         assert result["body"]["data"]["flags"] == 64
         assert "not found" in result["body"]["data"]["content"].lower()
+
+    def test_allowed_for_non_admin_creator(self):
+        event = make_stored_event(created_by="user1")
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.store_message_ref"),
+            patch("bench_boss.bot.store_interaction_ref"),
+        ):
+            result = handle_interaction(
+                make_edit_event_body("test-key", permissions="0")
+            )
+        assert result["body"]["type"] == MODAL
+
+    def test_rejected_for_non_admin_different_creator(self):
+        event = make_stored_event(created_by="someone_else")
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(
+                make_edit_event_body("test-key", permissions="0")
+            )
+        assert result["body"]["data"]["flags"] == 64
+        assert "permission" in result["body"]["data"]["content"].lower()
 
     def test_returns_modal_prefilled(self):
         event = make_stored_event(name="Team Standup", location="Room 1")
@@ -1867,6 +1907,13 @@ class TestCreateEventModalSubmit:
         assert kwargs["guild_id"] == "guild1"
         assert kwargs["channel_id"] == "ch1"
         assert "webcal_url" not in kwargs
+
+    def test_valid_submission_stores_creator(self):
+        body = make_event_modal_submit_body("create_event_modal")
+        body["member"] = {"user": {"id": "user42"}}
+        with patch("bench_boss.bot.save_event") as mock_save:
+            handle_interaction(body, bot_token="tok")
+        assert mock_save.call_args[1]["created_by"] == "user42"
 
     def test_valid_submission_parses_start_and_end_90_minutes_apart(self):
         with patch("bench_boss.bot.save_event") as mock_save:
