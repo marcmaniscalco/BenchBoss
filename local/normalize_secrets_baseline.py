@@ -26,6 +26,12 @@ def main() -> None:
         normalized_results[filename.replace("\\", "/")] = entries
     data["results"] = normalized_results
 
+    # `detect-secrets scan` also bakes an absolute, OS-native path into this
+    # filter's config on Windows (Linux writes the relative ".secrets.baseline").
+    for f in data["filters_used"]:
+        if f["path"] == "detect_secrets.filters.common.is_baseline_file":
+            f["filename"] = ".secrets.baseline"
+
     BASELINE_PATH.write_text(json.dumps(data, indent=2) + "\n")
 
 

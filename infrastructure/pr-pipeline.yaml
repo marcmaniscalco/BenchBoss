@@ -1,0 +1,350 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  BenchBoss PR pipeline — GitHub PR opened/updated -> Build -> Deploy QA.
+  Deliberately has no approval or Prod stage, and its CloudFormation deploy
+  role can only act on the QA stack, so no PR branch can ever reach Prod.
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Default: marcmaniscalco
+    Description: GitHub org/user that owns the repository
+  RepositoryName:
+    Type: String
+    Default: BenchBoss
+    Description: GitHub repository name (without the owner prefix)
+  TargetBranch:
+    Type: String
+    Default: main
+    Description: Base branch PRs must target to trigger this pipeline
+  QaStackName:
+    Type: String
+    Default: bench-boss-qa
+    Description: >-
+      The (shared) QA stack this pipeline deploys to. Must match the QA
+      stack name used by the main pipeline (infrastructure/pipeline.yaml) —
+      this is intentionally the same single QA environment, not a
+      per-PR environment. Whichever PR (or main-branch merge) deployed most
+      recently is what's live in QA.
+  QaSecretName:
+    Type: String
+    Default: bench-boss/qa
+    Description: Secrets Manager secret holding QA Discord credentials as JSON
+  GitHubConnectionArn:
+    Type: String
+    Default: arn:aws:codeconnections:us-east-1:629520208838:connection/20e2ba2a-cd39-4912-850c-004bf1461bb7
+    Description: >-
+      ARN of the same CodeConnections connection used by the main pipeline
+      (infrastructure/pipeline.yaml) — already installed and authorized
+      against this repo, so it's reused here rather than creating a second
+      connection.
+
+Resources:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Artifact bucket — separate from the main pipeline's bucket so this
+  # pipeline's blast radius (and IAM) stays fully independent.
+  # ────────────────────────────────────────────────────────────────────────────
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            ExpirationInDays: 30
+            NoncurrentVersionExpirationInDays: 7
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # CodeBuild — same checks as the main pipeline (buildspec.yml is shared):
+  # lint, format check, secrets scan, tests, then sam build/package.
+  # ────────────────────────────────────────────────────────────────────────────
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-build"
+      ServiceRole: !GetAtt BuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # CloudFormation deploy role — the actual "QA only, never Prod" boundary.
+  # cloudformation:* is scoped to the QA stack's ARN only, so this role can
+  # never CreateStack/UpdateStack/etc. on bench-boss-prod (or any stack other
+  # than QaStackName), regardless of what the pipeline definition does.
+  # The underlying Lambda/DynamoDB/IAM/Logs permissions are further scoped to
+  # resources whose names CloudFormation auto-prefixes with the stack name,
+  # matching this project's QA/Prod naming split.
+  # ────────────────────────────────────────────────────────────────────────────
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: QaOnlyDeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudFormationQaStackOnly
+                Effect: Allow
+                Action: cloudformation:*
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${QaStackName}/*"
+              - Sid: CloudFormationTemplateValidation
+                Effect: Allow
+                Action: cloudformation:ValidateTemplate
+                Resource: "*"
+              - Sid: LambdaQaOnly
+                Effect: Allow
+                Action: lambda:*
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${QaStackName}-*"
+              - Sid: LambdaEventSourceMappingCreate
+                Effect: Allow
+                Action:
+                  - lambda:CreateEventSourceMapping
+                  - lambda:GetEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                # These actions don't support resource-level restriction on
+                # create (the mapping's ARN doesn't exist yet); the DynamoDB
+                # stream ARN they can be pointed at is still QA-only (below).
+                Resource: "*"
+              - Sid: DynamoDbQaOnly
+                Effect: Allow
+                Action: dynamodb:*
+                Resource:
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${QaStackName}-*"
+                  - !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${QaStackName}-*/stream/*"
+              - Sid: IamRoleQaOnly
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${QaStackName}-*"
+              - Sid: LogsQaOnly
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DescribeLogGroups
+                  - logs:TagResource
+                  - logs:ListTagsForResource
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${QaStackName}-*"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${QaStackName}-*:*"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # CodePipeline role
+  # ────────────────────────────────────────────────────────────────────────────
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                  - codeconnections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: !GetAtt BuildProject.Arn
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:ValidateTemplate
+                Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${QaStackName}/*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationRole.Arn
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # The pipeline — V2, triggered only by PR open/update events targeting
+  # TargetBranch (any source branch name). No push trigger, no Prod stage.
+  # QUEUED execution mode so concurrent PR-triggered runs deploy to the
+  # single shared QA stack one at a time instead of racing each other.
+  # ────────────────────────────────────────────────────────────────────────────
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      PipelineType: V2
+      ExecutionMode: QUEUED
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Triggers:
+        - ProviderType: CodeStarSourceConnection
+          GitConfiguration:
+            SourceActionName: Source
+            PullRequest:
+              - Branches:
+                  Includes:
+                    - !Ref TargetBranch
+                Events:
+                  - OPEN
+                  - UPDATED
+      Stages:
+
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Sub "${GitHubOwner}/${RepositoryName}"
+                BranchName: !Ref TargetBranch
+                DetectChanges: false
+                OutputArtifactFormat: CODE_ZIP
+              OutputArtifacts:
+                - Name: SourceArtifact
+
+        - Name: Build
+          Actions:
+            - Name: BuildAndTest
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref BuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+
+        - Name: DeployQA
+          Actions:
+            - Name: DeployQA
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                StackName: !Ref QaStackName
+                TemplatePath: BuildArtifact::packaged.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "DiscordPublicKey": "{{resolve:secretsmanager:${QaSecretName}:SecretString:DiscordPublicKey}}",
+                    "DiscordToken": "{{resolve:secretsmanager:${QaSecretName}:SecretString:DiscordToken}}"
+                  }
+              InputArtifacts:
+                - Name: BuildArtifact
+
+Outputs:
+  PipelineUrl:
+    Description: Console URL for the pipeline
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view"
+  ArtifactBucket:
+    Description: Bucket where pipeline artifacts and Lambda packages are stored
+    Value: !Ref ArtifactBucket
