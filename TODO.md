@@ -15,3 +15,4 @@
 
 ## Chores
 - [X] Fix `make server` env vars (each Makefile line runs in a separate shell on Windows — vars don't persist)
+- [ ] TEMP: verify PR Checks workflow — this line exists only to trigger a test PR and will not be merged
