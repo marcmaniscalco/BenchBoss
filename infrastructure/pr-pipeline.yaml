@@ -38,6 +38,16 @@ Parameters:
       (infrastructure/pipeline.yaml) — already installed and authorized
       against this repo, so it's reused here rather than creating a second
       connection.
+  MainPipelineArtifactBucketName:
+    Type: String
+    Default: bench-boss-pipeline-artifactbucket-zeshz6ggaced
+    Description: >-
+      The main pipeline's (infrastructure/pipeline.yaml) artifact bucket
+      name. Since both pipelines deploy the same shared QaStackName, a
+      CloudFormation rollback on this stack may need to re-fetch Lambda code
+      that was last deployed by the *other* pipeline — this grants read-only
+      access to that bucket too, so rollback doesn't get stuck with
+      AccessDenied. Read-only, and unrelated to the QA-only write boundary.
 
 Resources:
 
@@ -159,6 +169,20 @@ Resources:
                 # covered by the QA-stack-scoped statement above) to expand it.
                 Action: cloudformation:CreateChangeSet
                 Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+              - Sid: ArtifactBucketReadForLambdaCode
+                Effect: Allow
+                # AWS::Serverless::Function's Code points at the sam-package'd
+                # zip in this bucket; CloudFormation's Lambda resource handler
+                # fetches it using this role's credentials (both for a normal
+                # update and for rolling back to a previous version's code).
+                # Includes the main pipeline's bucket too — see
+                # MainPipelineArtifactBucketName's description above.
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub "${ArtifactBucket.Arn}/*"
+                  - !Sub "arn:aws:s3:::${MainPipelineArtifactBucketName}/*"
               - Sid: LambdaQaOnly
                 Effect: Allow
                 Action: lambda:*
