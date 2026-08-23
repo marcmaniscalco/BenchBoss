@@ -151,6 +151,14 @@ Resources:
                 Effect: Allow
                 Action: cloudformation:ValidateTemplate
                 Resource: "*"
+              - Sid: CloudFormationSamTransform
+                Effect: Allow
+                # template.yaml declares `Transform: AWS::Serverless-2016-10-31`
+                # (CAPABILITY_AUTO_EXPAND) — CloudFormation needs a separate
+                # CreateChangeSet grant on this AWS-owned macro resource (not
+                # covered by the QA-stack-scoped statement above) to expand it.
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
               - Sid: LambdaQaOnly
                 Effect: Allow
                 Action: lambda:*
