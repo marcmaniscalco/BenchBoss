@@ -47,7 +47,7 @@ COMMANDS = [
     },
     {
         "name": "schedule",
-        "description": "Show upcoming calendar events for the next 7 days.",
+        "description": "Post the next upcoming event from a calendar.",
         "options": [
             {
                 "name": "url",
