@@ -341,7 +341,7 @@ Expected output:
 ```
 Registered 4 command(s) for qa:
   /ping — Check if the bot is alive.
-  /schedule — Show upcoming calendar events for the next 7 days.
+  /schedule — Post the next upcoming event from a calendar.
   /events — DM you a list of all events from a calendar.
   /create-event — Create a one-off RSVP event.
 ```
