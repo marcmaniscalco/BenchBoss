@@ -18,14 +18,17 @@ from bench_boss.discord_api import (
     build_event_embed,
     build_event_modal,
     build_remove_rsvp_modal,
+    build_retry_button,
     build_rsvp_components,
 )
 from bench_boss.dynamo import (
     RSVP_ACTIONS,
     delete_event,
     find_event_in_channel,
+    get_draft_event,
     get_event,
     remove_rsvp,
+    save_draft_event,
     save_event,
     set_goalie,
     set_rsvp,
@@ -154,6 +157,8 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             return _handle_goalie_rsvp(body)
         if custom_id.startswith("edit_event:"):
             return _handle_edit_event_button(body)
+        if custom_id.startswith("retry_event_modal:"):
+            return _handle_retry_event_modal_button(body)
         return _handle_rsvp(body)
 
     if interaction_type == MODAL_SUBMIT:
@@ -162,9 +167,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             "remove_rsvp_modal:"
         ):
             return _handle_rsvp_edit_submit(body, bot_token)
-        if custom_id == "create_event_modal" or custom_id.startswith(
-            "create_event_modal:"
-        ):
+        if custom_id == "create_event_modal":
             return _handle_create_event_submit(body)
         if custom_id.startswith("edit_event_modal:"):
             return _handle_edit_event_submit(body, bot_token)
@@ -446,6 +449,28 @@ def _handle_edit_event_button(body: dict) -> dict:
         "body": {
             "type": MODAL,
             "data": build_event_modal(event_key, prefill=prefill),
+        },
+    }
+
+
+def _handle_retry_event_modal_button(body: dict) -> dict:
+    """Reopen a create/edit-event modal from a validation-failure message's
+    "Fix and Retry" button, prefilled with what was previously submitted."""
+    draft_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    draft = get_draft_event(draft_key)
+    if draft is None:
+        return _ephemeral("This retry has expired — run the command again.")
+
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": MODAL,
+            "data": build_event_modal(
+                draft.get("target_event_key"),
+                prefill=draft["fields"],
+                error_field=draft["error_field"],
+                error_message=draft["error_message"],
+            ),
         },
     }
 
@@ -756,19 +781,35 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     return _ephemeral(f"Removed **{display_name or user_id}** from the RSVP.")
 
 
+def _reject_event_modal(
+    fields: dict, error: str, error_field: str, target_event_key: str | None
+) -> dict:
+    """
+    Stash a failed create/edit-event submission and respond with an
+    ephemeral error message plus a "Fix and Retry" button. Discord does
+    not allow responding to a MODAL_SUBMIT interaction with a MODAL, so
+    the modal can only be reopened from a fresh button-click interaction.
+    """
+    draft_key = str(uuid.uuid4())
+    save_draft_event(draft_key, fields, error_field, error, target_event_key)
+    return {
+        "statusCode": 200,
+        "body": {
+            "type": CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {
+                "content": f"❌ {error}",
+                "flags": 64,
+                "components": build_retry_button(draft_key),
+            },
+        },
+    }
+
+
 def _handle_create_event_submit(body: dict) -> dict:
     fields = _extract_modal_fields(body)
     parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:
-        return {
-            "statusCode": 200,
-            "body": {
-                "type": MODAL,
-                "data": build_event_modal(
-                    prefill=fields, error_field=error_field, error_message=error
-                ),
-            },
-        }
+        return _reject_event_modal(fields, error, error_field, None)
 
     event_key = str(uuid.uuid4())
 
@@ -814,25 +855,11 @@ def _handle_create_event_submit(body: dict) -> dict:
 
 
 def _handle_edit_event_submit(body: dict, bot_token: str) -> dict:
-    # custom_id is "edit_event_modal:{event_key}", or on a reopened modal
-    # "edit_event_modal:{event_key}:retry-{suffix}" — the event_key itself
-    # never contains a colon, so it's always exactly the second segment.
-    event_key = body.get("data", {}).get("custom_id", "").split(":")[1]
+    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     fields = _extract_modal_fields(body)
     parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:
-        return {
-            "statusCode": 200,
-            "body": {
-                "type": MODAL,
-                "data": build_event_modal(
-                    event_key,
-                    prefill=fields,
-                    error_field=error_field,
-                    error_message=error,
-                ),
-            },
-        }
+        return _reject_event_modal(fields, error, error_field, event_key)
 
     try:
         event = update_event(

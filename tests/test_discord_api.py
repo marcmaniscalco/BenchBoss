@@ -9,6 +9,7 @@ from bench_boss.discord_api import (
     build_event_modal,
     build_no_events_embed,
     build_remove_rsvp_modal,
+    build_retry_button,
     build_rsvp_components,
 )
 
@@ -678,19 +679,26 @@ class TestBuildEventModal:
         for field, label in _EVENT_MODAL_ERROR_LABELS.items():
             assert len(label) <= 45, f"{field} error label exceeds 45 chars: {label}"
 
-    def test_error_reopen_gets_a_different_custom_id_for_create(self):
-        # Discord clients choke on a modal responding to its own
-        # submission with an identical custom_id, so a reopen after a
-        # validation failure must not reuse "create_event_modal".
+    def test_custom_id_is_stable_regardless_of_error_field(self):
+        # build_event_modal is only ever called from a fresh
+        # APPLICATION_COMMAND or MESSAGE_COMPONENT interaction (never as a
+        # direct response to the MODAL_SUBMIT that failed — Discord
+        # disallows that), so there's no need to vary the custom_id here.
         modal = build_event_modal(error_field="name", error_message="Required.")
-        assert modal["custom_id"] != "create_event_modal"
-        assert modal["custom_id"].startswith("create_event_modal:")
-
-    def test_error_reopen_gets_a_different_custom_id_for_edit(self):
+        assert modal["custom_id"] == "create_event_modal"
         modal = build_event_modal("key1", error_field="name", error_message="Required.")
-        assert modal["custom_id"] != "edit_event_modal:key1"
-        assert modal["custom_id"].startswith("edit_event_modal:key1:")
+        assert modal["custom_id"] == "edit_event_modal:key1"
 
-    def test_no_error_keeps_the_stable_custom_id(self):
-        assert build_event_modal()["custom_id"] == "create_event_modal"
-        assert build_event_modal("key1")["custom_id"] == "edit_event_modal:key1"
+
+class TestBuildRetryButton:
+    def test_single_button_with_draft_key_in_custom_id(self):
+        rows = build_retry_button("abc123")
+        assert len(rows) == 1
+        button = rows[0]["components"][0]
+        assert button["type"] == 2
+        assert button["custom_id"] == "retry_event_modal:abc123"
+
+    def test_button_has_a_label(self):
+        rows = build_retry_button("abc123")
+        button = rows[0]["components"][0]
+        assert button["label"]

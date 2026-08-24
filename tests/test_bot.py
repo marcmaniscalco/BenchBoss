@@ -1978,43 +1978,48 @@ class TestCreateEventModalSubmit:
         assert result["body"]["data"]["embeds"][0]["title"] == "Scrimmage"
         assert "components" in result["body"]["data"]
 
-    def _modal_field(self, result, custom_id):
-        return next(
-            comp
-            for row in result["body"]["data"]["components"]
-            for comp in row["components"]
-            if comp["custom_id"] == custom_id
-        )
-
-    def test_blank_title_reopens_modal_with_error_on_name(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+    def test_blank_title_replies_with_error_and_retry_button(self):
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot.save_draft_event") as mock_draft,
+        ):
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal", name="  "),
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["type"] == MODAL
-        # Reopened custom_id must differ from the submitted one — Discord
-        # clients choke on a modal responding to its own submission with
-        # an identical custom_id.
-        assert result["body"]["data"]["custom_id"] != "create_event_modal"
-        assert result["body"]["data"]["custom_id"].startswith("create_event_modal:")
-        name_field = self._modal_field(result, "name")
-        assert name_field["label"].startswith("🔴*")
-        assert "blank" in name_field["label"].lower()
-        assert "title" in name_field["placeholder"].lower()
+        # Discord does not allow responding to a MODAL_SUBMIT interaction
+        # with a MODAL, so a failure gets an ephemeral message with a
+        # button that reopens the modal on a fresh MESSAGE_COMPONENT click.
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["flags"] == 64
+        assert "title" in result["body"]["data"]["content"].lower()
+        button = result["body"]["data"]["components"][0]["components"][0]
+        assert button["custom_id"].startswith("retry_event_modal:")
+        draft_key, fields, error_field, error, target_event_key = mock_draft.call_args[
+            0
+        ]
+        assert error_field == "name"
+        assert target_event_key is None
 
-    def test_blank_title_preserves_other_field_values(self):
-        with patch("bench_boss.bot.save_event"):
-            result = handle_interaction(
+    def test_blank_title_stashes_typed_field_values_for_the_retry(self):
+        with (
+            patch("bench_boss.bot.save_event"),
+            patch("bench_boss.bot.save_draft_event") as mock_draft,
+        ):
+            handle_interaction(
                 make_event_modal_submit_body("create_event_modal", name="  "),
                 bot_token="tok",
             )
-        assert self._modal_field(result, "location")["value"] == "Rink 1"
-        assert self._modal_field(result, "duration")["value"] == "90"
+        fields = mock_draft.call_args[0][1]
+        assert fields["location"] == "Rink 1"
+        assert fields["duration"] == "90"
 
-    def test_bad_datetime_reopens_modal_with_error_on_datetime(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+    def test_bad_datetime_replies_with_error_and_retry_button(self):
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot.save_draft_event") as mock_draft,
+        ):
             result = handle_interaction(
                 make_event_modal_submit_body(
                     "create_event_modal", datetime="not a date"
@@ -2022,46 +2027,35 @@ class TestCreateEventModalSubmit:
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["type"] == MODAL
-        datetime_field = self._modal_field(result, "datetime")
-        assert datetime_field["label"].startswith("🔴*")
-        # The label — not the placeholder — is what's actually visible,
-        # since the field always has a prefilled value that hides the
-        # placeholder. The format advice has to be readable there.
-        assert "YYYY-MM-DD" in datetime_field["label"]
-        assert datetime_field["value"] == "not a date"
-        assert "date/time" in datetime_field["placeholder"].lower()
+        assert result["body"]["data"]["flags"] == 64
+        assert "date/time" in result["body"]["data"]["content"].lower()
+        assert mock_draft.call_args[0][2] == "datetime"
 
-    def test_bad_duration_reopens_modal_with_error_on_duration(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+    def test_bad_duration_replies_with_error_and_retry_button(self):
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot.save_draft_event") as mock_draft,
+        ):
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal", duration="soon"),
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["type"] == MODAL
-        duration_field = self._modal_field(result, "duration")
-        assert duration_field["label"].startswith("🔴*")
-        assert "minutes" in duration_field["label"].lower()
-        assert "duration" in duration_field["placeholder"].lower()
+        assert result["body"]["data"]["flags"] == 64
+        assert "duration" in result["body"]["data"]["content"].lower()
+        assert mock_draft.call_args[0][2] == "duration"
 
-    def test_negative_duration_reopens_modal_with_error(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+    def test_negative_duration_replies_with_error(self):
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot.save_draft_event"),
+        ):
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal", duration="-5"),
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["type"] == MODAL
-        assert self._modal_field(result, "duration")["label"].startswith("🔴*")
-
-    def test_resubmitting_a_reopened_modal_still_routes_to_create(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
-            handle_interaction(
-                make_event_modal_submit_body("create_event_modal:retry-abcd1234"),
-                bot_token="tok",
-            )
-        mock_save.assert_called_once()
+        assert result["body"]["data"]["flags"] == 64
 
     def test_blank_location_and_description_are_omitted(self):
         with patch("bench_boss.bot.save_event") as mock_save:
@@ -2106,8 +2100,11 @@ class TestEditEventModalSubmit:
         assert result["body"]["data"]["flags"] == 64
         assert "not found" in result["body"]["data"]["content"].lower()
 
-    def test_bad_datetime_reopens_modal_with_error_on_datetime(self):
-        with patch("bench_boss.bot.update_event") as mock_update:
+    def test_bad_datetime_replies_with_error_and_retry_button(self):
+        with (
+            patch("bench_boss.bot.update_event") as mock_update,
+            patch("bench_boss.bot.save_draft_event") as mock_draft,
+        ):
             result = handle_interaction(
                 make_event_modal_submit_body(
                     "edit_event_modal:test-key", datetime="garbage"
@@ -2115,31 +2112,71 @@ class TestEditEventModalSubmit:
                 bot_token="tok",
             )
         mock_update.assert_not_called()
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["flags"] == 64
+        assert "date/time" in result["body"]["data"]["content"].lower()
+        button = result["body"]["data"]["components"][0]["components"][0]
+        assert button["custom_id"].startswith("retry_event_modal:")
+        draft_key, fields, error_field, error, target_event_key = mock_draft.call_args[
+            0
+        ]
+        assert error_field == "datetime"
+        assert target_event_key == "test-key"
+        assert fields["datetime"] == "garbage"
+
+
+# ---------------------------------------------------------------------------
+# handle_interaction — retry event modal button
+# ---------------------------------------------------------------------------
+
+
+def make_retry_button_body(draft_key: str) -> dict:
+    return {
+        "type": MESSAGE_COMPONENT,
+        "data": {"custom_id": f"retry_event_modal:{draft_key}"},
+    }
+
+
+class TestRetryEventModalButton:
+    def _draft(self, **overrides):
+        draft = {
+            "fields": {
+                "name": "Scrimmage",
+                "datetime": "not a date",
+                "duration": "90",
+                "location": "Rink 1",
+                "description": "Bring pads",
+            },
+            "error_field": "datetime",
+            "error_message": "Could not parse date/time.",
+            "target_event_key": None,
+        }
+        draft.update(overrides)
+        return draft
+
+    def test_reopens_create_modal_prefilled_from_the_draft(self):
+        with patch("bench_boss.bot.get_draft_event", return_value=self._draft()):
+            result = handle_interaction(make_retry_button_body("abc123"))
         assert result["body"]["type"] == MODAL
-        assert result["body"]["data"]["custom_id"] != "edit_event_modal:test-key"
-        assert result["body"]["data"]["custom_id"].startswith(
-            "edit_event_modal:test-key:"
-        )
+        assert result["body"]["data"]["custom_id"] == "create_event_modal"
         datetime_field = next(
             comp
             for row in result["body"]["data"]["components"]
             for comp in row["components"]
             if comp["custom_id"] == "datetime"
         )
+        assert datetime_field["value"] == "not a date"
         assert datetime_field["label"].startswith("🔴*")
-        assert "YYYY-MM-DD" in datetime_field["label"]
-        assert datetime_field["value"] == "garbage"
 
-    def test_resubmitting_a_reopened_modal_still_extracts_event_key(self):
-        with (
-            patch("bench_boss.bot.update_event") as mock_update,
-            patch("bench_boss.bot._update_channel_message"),
-        ):
-            mock_update.return_value = make_stored_event(name="Scrimmage")
-            handle_interaction(
-                make_event_modal_submit_body(
-                    "edit_event_modal:test-key:retry-abcd1234"
-                ),
-                bot_token="tok",
-            )
-        assert mock_update.call_args[0][0] == "test-key"
+    def test_reopens_edit_modal_when_draft_has_a_target_event_key(self):
+        draft = self._draft(target_event_key="test-key")
+        with patch("bench_boss.bot.get_draft_event", return_value=draft):
+            result = handle_interaction(make_retry_button_body("abc123"))
+        assert result["body"]["data"]["custom_id"] == "edit_event_modal:test-key"
+
+    def test_expired_draft_returns_ephemeral_message(self):
+        with patch("bench_boss.bot.get_draft_event", return_value=None):
+            result = handle_interaction(make_retry_button_body("expired"))
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["flags"] == 64
+        assert "expired" in result["body"]["data"]["content"].lower()

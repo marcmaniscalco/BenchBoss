@@ -1,6 +1,5 @@
 """Discord embed and component builders for Apollo-style event messages."""
 
-import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
@@ -241,6 +240,29 @@ def build_delete_confirm_buttons(
     ]
 
 
+def build_retry_button(draft_key: str) -> list[dict]:
+    """
+    Action row with a single "Fix and Retry" button for a validation-failure
+    message. Clicking it is a fresh MESSAGE_COMPONENT interaction, which is
+    allowed to respond with a MODAL (unlike the MODAL_SUBMIT interaction
+    that triggered the failure).
+    """
+    return [
+        {
+            "type": 1,  # ACTION_ROW
+            "components": [
+                {
+                    "type": 2,  # BUTTON
+                    "style": 1,  # PRIMARY (blue)
+                    "emoji": {"name": "✏️"},
+                    "label": "Fix and Retry",
+                    "custom_id": f"retry_event_modal:{draft_key}",
+                }
+            ],
+        }
+    ]
+
+
 def build_no_events_embed() -> dict:
     """Build an embed shown when the calendar has no more upcoming events."""
     return {
@@ -383,15 +405,13 @@ def build_event_modal(
     that failed validation: its label is swapped for a red-asterisk
     marker plus short fix-it advice (see `_EVENT_MODAL_ERROR_LABELS`),
     and its placeholder is set to the fuller error message as a fallback
-    for the rare case the field ends up empty. So a rejected submission
-    can be reopened with the problem highlighted. In this case the
-    modal's custom_id also gets a random suffix — Discord clients choke
-    on a modal responding to its own submission with an identical
-    custom_id, so a reopen needs a fresh one.
+    for the rare case the field ends up empty. Used when reopening this
+    modal from the "Fix and Retry" button on a validation-failure message
+    (see `build_retry_button`) — Discord does not allow responding to a
+    modal submission with another modal, so a fresh MESSAGE_COMPONENT
+    interaction (the button click) is what actually reopens it.
     """
     custom_id = f"edit_event_modal:{event_key}" if event_key else "create_event_modal"
-    if error_field:
-        custom_id += f":retry-{uuid.uuid4().hex[:8]}"
     title = "Edit Event" if event_key else "Create Event"
 
     components = []

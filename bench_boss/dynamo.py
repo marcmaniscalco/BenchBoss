@@ -7,12 +7,17 @@ from datetime import UTC, datetime, timedelta
 import boto3
 from boto3.dynamodb.conditions import Attr
 
-from bench_boss.constants import EVENT_TTL_HOURS
+from bench_boss.constants import EVENT_DRAFT_TTL_MINUTES, EVENT_TTL_HOURS
 
 logger = logging.getLogger(__name__)
 
 RSVP_ACTIONS = ("accepted", "declined", "tentative")
 GOALIE_ACTION = "goalie"
+
+# Prefix for short-lived "retry this modal" draft items, kept in the same
+# table as events (its only key is event_key) but namespaced so a draft's
+# random key can never collide with a real event_key (a bare uuid4).
+DRAFT_KEY_PREFIX = "draft:"
 
 
 def _table():
@@ -141,6 +146,45 @@ def store_interaction_ref(event_key: str, interaction_token: str, app_id: str) -
         UpdateExpression="SET interaction_token = :t, app_id = :a",
         ExpressionAttributeValues={":t": interaction_token, ":a": app_id},
     )
+
+
+def save_draft_event(
+    draft_key: str,
+    fields: dict,
+    error_field: str,
+    error_message: str,
+    target_event_key: str | None,
+) -> None:
+    """
+    Stash a failed create/edit-event modal submission for a "Fix and Retry"
+    button to read back and use to reopen the modal. Short TTL — this only
+    needs to survive until the user clicks the button or gives up.
+    """
+    item: dict = {
+        "event_key": f"{DRAFT_KEY_PREFIX}{draft_key}",
+        "fields": fields,
+        "error_field": error_field,
+        "error_message": error_message,
+        "ttl": int(
+            (datetime.now(UTC) + timedelta(minutes=EVENT_DRAFT_TTL_MINUTES)).timestamp()
+        ),
+    }
+    if target_event_key is not None:
+        item["target_event_key"] = target_event_key
+    _table().put_item(Item=item)
+
+
+def get_draft_event(draft_key: str) -> dict | None:
+    """Return a stashed draft submission, or None if missing or expired."""
+    response = _table().get_item(Key={"event_key": f"{DRAFT_KEY_PREFIX}{draft_key}"})
+    item = response.get("Item")
+    if item is None:
+        return None
+    # DynamoDB's TTL sweep isn't instant — an item can linger past its ttl
+    # for a while, so also check it ourselves.
+    if item["ttl"] < datetime.now(UTC).timestamp():
+        return None
+    return item
 
 
 def delete_event(event_key: str) -> None:

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,8 +7,10 @@ from bench_boss.dynamo import (
     _ttl_timestamp,
     delete_event,
     find_event_in_channel,
+    get_draft_event,
     get_event,
     remove_rsvp,
+    save_draft_event,
     save_event,
     set_goalie,
     set_rsvp,
@@ -344,6 +347,67 @@ class TestStoreInteractionRef:
         values = kwargs["ExpressionAttributeValues"]
         assert values[":t"] == "mytoken"
         assert values[":a"] == "myapp"
+
+
+# ---------------------------------------------------------------------------
+# save_draft_event / get_draft_event
+# ---------------------------------------------------------------------------
+
+
+class TestSaveDraftEvent:
+    def test_puts_item_with_prefixed_key(self, mock_table):
+        save_draft_event("abc123", {"name": "x"}, "name", "Required.", None)
+        mock_table.put_item.assert_called_once()
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["event_key"] == "draft:abc123"
+
+    def test_stores_fields_error_field_and_message(self, mock_table):
+        fields = {"name": "x", "datetime": "garbage"}
+        save_draft_event("abc123", fields, "datetime", "Bad date.", None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["fields"] == fields
+        assert item["error_field"] == "datetime"
+        assert item["error_message"] == "Bad date."
+
+    def test_omits_target_event_key_when_none(self, mock_table):
+        save_draft_event("abc123", {}, "name", "Required.", None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert "target_event_key" not in item
+
+    def test_stores_target_event_key_when_editing(self, mock_table):
+        save_draft_event("abc123", {}, "name", "Required.", "event42")
+        item = mock_table.put_item.call_args[1]["Item"]
+        assert item["target_event_key"] == "event42"
+
+    def test_ttl_is_in_the_near_future(self, mock_table):
+        save_draft_event("abc123", {}, "name", "Required.", None)
+        item = mock_table.put_item.call_args[1]["Item"]
+        now = datetime.now(UTC).timestamp()
+        assert now < item["ttl"] <= now + timedelta(minutes=15).total_seconds()
+
+
+class TestGetDraftEvent:
+    def test_returns_item_when_found_and_not_expired(self, mock_table):
+        future_ttl = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+        item = {"event_key": "draft:abc123", "fields": {}, "ttl": future_ttl}
+        mock_table.get_item.return_value = {"Item": item}
+        assert get_draft_event("abc123") == item
+
+    def test_uses_prefixed_key_to_look_up(self, mock_table):
+        mock_table.get_item.return_value = {}
+        get_draft_event("abc123")
+        mock_table.get_item.assert_called_once_with(Key={"event_key": "draft:abc123"})
+
+    def test_returns_none_when_not_found(self, mock_table):
+        mock_table.get_item.return_value = {}
+        assert get_draft_event("missing") is None
+
+    def test_returns_none_when_expired(self, mock_table):
+        past_ttl = int((datetime.now(UTC) - timedelta(minutes=1)).timestamp())
+        mock_table.get_item.return_value = {
+            "Item": {"event_key": "draft:abc123", "ttl": past_ttl}
+        }
+        assert get_draft_event("abc123") is None
 
 
 # ---------------------------------------------------------------------------
