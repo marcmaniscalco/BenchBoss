@@ -1994,7 +1994,11 @@ class TestCreateEventModalSubmit:
             )
         mock_save.assert_not_called()
         assert result["body"]["type"] == MODAL
-        assert result["body"]["data"]["custom_id"] == "create_event_modal"
+        # Reopened custom_id must differ from the submitted one — Discord
+        # clients choke on a modal responding to its own submission with
+        # an identical custom_id.
+        assert result["body"]["data"]["custom_id"] != "create_event_modal"
+        assert result["body"]["data"]["custom_id"].startswith("create_event_modal:")
         name_field = self._modal_field(result, "name")
         assert name_field["label"].startswith("🔴*")
         assert "blank" in name_field["label"].lower()
@@ -2051,6 +2055,14 @@ class TestCreateEventModalSubmit:
         assert result["body"]["type"] == MODAL
         assert self._modal_field(result, "duration")["label"].startswith("🔴*")
 
+    def test_resubmitting_a_reopened_modal_still_routes_to_create(self):
+        with patch("bench_boss.bot.save_event") as mock_save:
+            handle_interaction(
+                make_event_modal_submit_body("create_event_modal:retry-abcd1234"),
+                bot_token="tok",
+            )
+        mock_save.assert_called_once()
+
     def test_blank_location_and_description_are_omitted(self):
         with patch("bench_boss.bot.save_event") as mock_save:
             handle_interaction(
@@ -2104,7 +2116,10 @@ class TestEditEventModalSubmit:
             )
         mock_update.assert_not_called()
         assert result["body"]["type"] == MODAL
-        assert result["body"]["data"]["custom_id"] == "edit_event_modal:test-key"
+        assert result["body"]["data"]["custom_id"] != "edit_event_modal:test-key"
+        assert result["body"]["data"]["custom_id"].startswith(
+            "edit_event_modal:test-key:"
+        )
         datetime_field = next(
             comp
             for row in result["body"]["data"]["components"]
@@ -2114,3 +2129,17 @@ class TestEditEventModalSubmit:
         assert datetime_field["label"].startswith("🔴*")
         assert "YYYY-MM-DD" in datetime_field["label"]
         assert datetime_field["value"] == "garbage"
+
+    def test_resubmitting_a_reopened_modal_still_extracts_event_key(self):
+        with (
+            patch("bench_boss.bot.update_event") as mock_update,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            mock_update.return_value = make_stored_event(name="Scrimmage")
+            handle_interaction(
+                make_event_modal_submit_body(
+                    "edit_event_modal:test-key:retry-abcd1234"
+                ),
+                bot_token="tok",
+            )
+        assert mock_update.call_args[0][0] == "test-key"

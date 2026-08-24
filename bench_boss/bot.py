@@ -162,7 +162,9 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             "remove_rsvp_modal:"
         ):
             return _handle_rsvp_edit_submit(body, bot_token)
-        if custom_id == "create_event_modal":
+        if custom_id == "create_event_modal" or custom_id.startswith(
+            "create_event_modal:"
+        ):
             return _handle_create_event_submit(body)
         if custom_id.startswith("edit_event_modal:"):
             return _handle_edit_event_submit(body, bot_token)
@@ -812,7 +814,10 @@ def _handle_create_event_submit(body: dict) -> dict:
 
 
 def _handle_edit_event_submit(body: dict, bot_token: str) -> dict:
-    event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
+    # custom_id is "edit_event_modal:{event_key}", or on a reopened modal
+    # "edit_event_modal:{event_key}:retry-{suffix}" — the event_key itself
+    # never contains a colon, so it's always exactly the second segment.
+    event_key = body.get("data", {}).get("custom_id", "").split(":")[1]
     fields = _extract_modal_fields(body)
     parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:

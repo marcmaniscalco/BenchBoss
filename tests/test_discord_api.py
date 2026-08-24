@@ -677,3 +677,20 @@ class TestBuildEventModal:
     def test_all_error_labels_fit_discord_limit(self):
         for field, label in _EVENT_MODAL_ERROR_LABELS.items():
             assert len(label) <= 45, f"{field} error label exceeds 45 chars: {label}"
+
+    def test_error_reopen_gets_a_different_custom_id_for_create(self):
+        # Discord clients choke on a modal responding to its own
+        # submission with an identical custom_id, so a reopen after a
+        # validation failure must not reuse "create_event_modal".
+        modal = build_event_modal(error_field="name", error_message="Required.")
+        assert modal["custom_id"] != "create_event_modal"
+        assert modal["custom_id"].startswith("create_event_modal:")
+
+    def test_error_reopen_gets_a_different_custom_id_for_edit(self):
+        modal = build_event_modal("key1", error_field="name", error_message="Required.")
+        assert modal["custom_id"] != "edit_event_modal:key1"
+        assert modal["custom_id"].startswith("edit_event_modal:key1:")
+
+    def test_no_error_keeps_the_stable_custom_id(self):
+        assert build_event_modal()["custom_id"] == "create_event_modal"
+        assert build_event_modal("key1")["custom_id"] == "edit_event_modal:key1"

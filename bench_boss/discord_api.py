@@ -1,5 +1,6 @@
 """Discord embed and component builders for Apollo-style event messages."""
 
+import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
@@ -383,9 +384,14 @@ def build_event_modal(
     marker plus short fix-it advice (see `_EVENT_MODAL_ERROR_LABELS`),
     and its placeholder is set to the fuller error message as a fallback
     for the rare case the field ends up empty. So a rejected submission
-    can be reopened with the problem highlighted.
+    can be reopened with the problem highlighted. In this case the
+    modal's custom_id also gets a random suffix — Discord clients choke
+    on a modal responding to its own submission with an identical
+    custom_id, so a reopen needs a fresh one.
     """
     custom_id = f"edit_event_modal:{event_key}" if event_key else "create_event_modal"
+    if error_field:
+        custom_id += f":retry-{uuid.uuid4().hex[:8]}"
     title = "Edit Event" if event_key else "Create Event"
 
     components = []
