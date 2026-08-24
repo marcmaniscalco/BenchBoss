@@ -279,6 +279,40 @@ def build_no_events_embed() -> dict:
     }
 
 
+def build_help_embed() -> dict:
+    """Build the static /bb-help embed listing commands and event-message controls."""
+    return {
+        "title": "BenchBoss Help",
+        "color": BLURPLE,
+        "fields": [
+            {
+                "name": "Slash Commands",
+                "value": (
+                    "`/bb-help` — show this message\n"
+                    "`/schedule <url>` — post the next upcoming event from a calendar\n"
+                    "`/events <url>` — DM you every upcoming event from a calendar\n"
+                    "`/create-event` — open a form to post a one-off event "
+                    "(not from a calendar)"
+                ),
+                "inline": False,
+            },
+            {
+                "name": "On an Event Message",
+                "value": (
+                    "✅ / ❌ / ❔ — RSVP Accepted / Declined / Tentative\n"
+                    "🇬 — toggle yourself as goalie (max one per event)\n"
+                    "➕ / ➖ — admin: add or remove someone else's RSVP "
+                    "by name/mention\n"
+                    "✏️ Edit — admins, or (for events you created "
+                    "yourself) you\n"
+                    "Delete — admins only"
+                ),
+                "inline": False,
+            },
+        ],
+    }
+
+
 def build_add_rsvp_modal(event_key: str) -> dict:
     """Return the modal data for adding a user to the RSVP."""
     return {

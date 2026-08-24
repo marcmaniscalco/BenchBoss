@@ -7,6 +7,7 @@ from bench_boss.discord_api import (
     build_add_rsvp_modal,
     build_event_embed,
     build_event_modal,
+    build_help_embed,
     build_no_events_embed,
     build_remove_rsvp_modal,
     build_retry_button,
@@ -499,6 +500,61 @@ class TestBuildNoEventsEmbed:
 
     def test_color_is_blurple(self):
         assert build_no_events_embed()["color"] == BLURPLE
+
+
+class TestBuildHelpEmbed:
+    def test_has_title(self):
+        assert build_help_embed()["title"] == "BenchBoss Help"
+
+    def test_color_is_blurple(self):
+        assert build_help_embed()["color"] == BLURPLE
+
+    def test_lists_all_four_slash_commands(self):
+        embed = build_help_embed()
+        commands_field = next(
+            f for f in embed["fields"] if f["name"] == "Slash Commands"
+        )
+        for cmd in ("/bb-help", "/schedule", "/events", "/create-event"):
+            assert cmd in commands_field["value"]
+
+    def test_describes_event_message_controls(self):
+        embed = build_help_embed()
+        controls_field = next(
+            f for f in embed["fields"] if f["name"] == "On an Event Message"
+        )
+        assert "goalie" in controls_field["value"].lower()
+        assert "Edit" in controls_field["value"]
+        assert "Delete" in controls_field["value"]
+
+    def test_delete_is_described_as_admin_only_not_creator(self):
+        # _handle_delete (bot.py) only checks _is_admin, with no creator
+        # exception — unlike _handle_edit_event_button, which allows the
+        # event's creator too. The two must not be described identically.
+        embed = build_help_embed()
+        controls_field = next(
+            f for f in embed["fields"] if f["name"] == "On an Event Message"
+        )
+        lines = controls_field["value"].split("\n")
+        delete_line = next(line for line in lines if "Delete" in line)
+        edit_line = next(line for line in lines if "Edit" in line)
+        assert "created yourself" not in delete_line
+        assert "admin" in delete_line.lower()
+        assert "created yourself" in edit_line
+
+    def test_goalie_emoji_matches_the_goalie_button(self):
+        # Same character used on the actual goalie button/field elsewhere
+        # (discord_api.py's build_rsvp_components / build_event_embed) —
+        # keep it consistent rather than picking a different "goalie" icon.
+        embed = build_help_embed()
+        controls_field = next(
+            f for f in embed["fields"] if f["name"] == "On an Event Message"
+        )
+        assert "🇬" in controls_field["value"]
+
+    def test_takes_no_arguments(self):
+        # Static for v1 — no per-invoker variation.
+        embed = build_help_embed()
+        assert isinstance(embed, dict)
 
 
 class TestBuildAddRsvpModal:

@@ -73,6 +73,10 @@ COMMANDS = [
         "name": "create-event",
         "description": "Create a one-off RSVP event.",
     },
+    {
+        "name": "bb-help",
+        "description": "Show BenchBoss commands and how to use event messages.",
+    },
 ]
 
 url = f"https://discord.com/api/v10/applications/{DISCORD_APP_ID}/guilds/{GUILD_ID}/commands"

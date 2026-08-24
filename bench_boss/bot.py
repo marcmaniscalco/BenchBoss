@@ -17,6 +17,7 @@ from bench_boss.discord_api import (
     build_delete_confirm_buttons,
     build_event_embed,
     build_event_modal,
+    build_help_embed,
     build_remove_rsvp_modal,
     build_retry_button,
     build_rsvp_components,
@@ -131,6 +132,15 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
             return {
                 "statusCode": 200,
                 "body": {"type": MODAL, "data": build_event_modal()},
+            }
+
+        if command == "bb-help":
+            return {
+                "statusCode": 200,
+                "body": {
+                    "type": CHANNEL_MESSAGE_WITH_SOURCE,
+                    "data": {"embeds": [build_help_embed()], "flags": 64},
+                },
             }
 
         return {
