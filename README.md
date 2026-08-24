@@ -3,7 +3,7 @@
 A Python Discord bot deployed as two SnapStart Lambdas:
 
 - **Interactions Lambda** — invoked via a public Function URL on every slash command / button / modal submit.
-- **Stream Lambda** — triggered by DynamoDB Streams when a TTL'd event row is removed, so the next calendar event is auto-posted.
+- **Stream Lambda** — triggered by DynamoDB Streams when a TTL'd event row is removed. If the expired event came from a subscribed calendar, it posts the next upcoming calendar event; a manually created event (via `/create-event`) is just deleted, no replacement posted.
 
 State lives in a DynamoDB table with TTL + Streams enabled. There is no VPC, no load balancer, no container.
 
