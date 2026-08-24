@@ -1,6 +1,7 @@
 from datetime import UTC, date, datetime, timedelta, timezone
 
 from bench_boss.discord_api import (
+    _EVENT_MODAL_ERROR_LABELS,
     BLURPLE,
     _build_gcal_url,
     build_add_rsvp_modal,
@@ -654,3 +655,25 @@ class TestBuildEventModal:
         assert components["datetime"]["value"] == "not a date"
         assert components["datetime"]["label"].startswith("🔴*")
         assert components["name"]["value"] == "Scrimmage"
+
+    def test_error_label_carries_fix_it_advice_even_with_a_value_set(self):
+        # The placeholder is invisible once a field has a value (which it
+        # always will here, since we prefill with what the user typed), so
+        # the format guidance has to be readable straight off the label.
+        modal = build_event_modal(
+            prefill={"datetime": "not a date"},
+            error_field="datetime",
+            error_message="Could not parse date/time.",
+        )
+        datetime_field = next(
+            comp
+            for row in modal["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "datetime"
+        )
+        assert "YYYY-MM-DD" in datetime_field["label"]
+        assert "value" in datetime_field
+
+    def test_all_error_labels_fit_discord_limit(self):
+        for field, label in _EVENT_MODAL_ERROR_LABELS.items():
+            assert len(label) <= 45, f"{field} error label exceeds 45 chars: {label}"

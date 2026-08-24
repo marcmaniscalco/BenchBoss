@@ -1997,6 +1997,7 @@ class TestCreateEventModalSubmit:
         assert result["body"]["data"]["custom_id"] == "create_event_modal"
         name_field = self._modal_field(result, "name")
         assert name_field["label"].startswith("🔴*")
+        assert "blank" in name_field["label"].lower()
         assert "title" in name_field["placeholder"].lower()
 
     def test_blank_title_preserves_other_field_values(self):
@@ -2020,6 +2021,10 @@ class TestCreateEventModalSubmit:
         assert result["body"]["type"] == MODAL
         datetime_field = self._modal_field(result, "datetime")
         assert datetime_field["label"].startswith("🔴*")
+        # The label — not the placeholder — is what's actually visible,
+        # since the field always has a prefilled value that hides the
+        # placeholder. The format advice has to be readable there.
+        assert "YYYY-MM-DD" in datetime_field["label"]
         assert datetime_field["value"] == "not a date"
         assert "date/time" in datetime_field["placeholder"].lower()
 
@@ -2033,6 +2038,7 @@ class TestCreateEventModalSubmit:
         assert result["body"]["type"] == MODAL
         duration_field = self._modal_field(result, "duration")
         assert duration_field["label"].startswith("🔴*")
+        assert "minutes" in duration_field["label"].lower()
         assert "duration" in duration_field["placeholder"].lower()
 
     def test_negative_duration_reopens_modal_with_error(self):
@@ -2106,4 +2112,5 @@ class TestEditEventModalSubmit:
             if comp["custom_id"] == "datetime"
         )
         assert datetime_field["label"].startswith("🔴*")
+        assert "YYYY-MM-DD" in datetime_field["label"]
         assert datetime_field["value"] == "garbage"

@@ -353,6 +353,17 @@ _EVENT_MODAL_FIELDS = [
     },
 ]
 
+# Discord text inputs cap "label" at 45 characters, and the label is the
+# only part of the field that's guaranteed visible — "placeholder" is
+# hidden the moment the field has a value, which it always will here since
+# we reopen the modal prefilled with what the user typed. So the fix-it
+# advice has to live in the label itself, kept short enough to fit.
+_EVENT_MODAL_ERROR_LABELS = {
+    "name": "🔴* Title — can't be blank",
+    "datetime": "🔴* Date/Time — YYYY-MM-DD H:MM AM/PM",
+    "duration": "🔴* Duration — whole minutes, > 0",
+}
+
 
 def build_event_modal(
     event_key: str | None = None,
@@ -368,9 +379,11 @@ def build_event_modal(
     used to pre-populate the corresponding text input.
 
     `error_field`/`error_message`, if given, mark that input as the one
-    that failed validation: its label is prefixed with a red-asterisk
-    marker and its placeholder is swapped for the error advice, so a
-    rejected submission can be reopened with the problem highlighted.
+    that failed validation: its label is swapped for a red-asterisk
+    marker plus short fix-it advice (see `_EVENT_MODAL_ERROR_LABELS`),
+    and its placeholder is set to the fuller error message as a fallback
+    for the rare case the field ends up empty. So a rejected submission
+    can be reopened with the problem highlighted.
     """
     custom_id = f"edit_event_modal:{event_key}" if event_key else "create_event_modal"
     title = "Edit Event" if event_key else "Create Event"
@@ -381,7 +394,9 @@ def build_event_modal(
         if prefill and prefill.get(field["custom_id"]):
             text_input["value"] = prefill[field["custom_id"]]
         if field["custom_id"] == error_field:
-            text_input["label"] = f"🔴* {field['label']}"
+            text_input["label"] = _EVENT_MODAL_ERROR_LABELS.get(
+                error_field, f"🔴* {field['label']}"
+            )
             if error_message:
                 text_input["placeholder"] = error_message[:100]
         components.append({"type": 1, "components": [text_input]})
