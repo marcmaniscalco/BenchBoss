@@ -252,18 +252,36 @@ class TestBuildEventEmbed:
         embed = build_event_embed("Event", naive_start, None, None, None, [], [], [])
         assert embed["title"] == "Event"
 
-    def test_when_field_shows_utc_label_for_utc_datetimes(self):
+    def test_when_field_converts_utc_to_team_timezone_label(self):
+        # START is 2026-04-05 19:00 UTC — daylight saving is in effect for
+        # America/New_York by then, so it should render in Eastern as EDT,
+        # not the literal "UTC" the input was tagged with.
         embed = build_event_embed("Event", START, None, None, None, [], [], [])
         when_field = next(f for f in embed["fields"] if "📅" in f["name"])
-        assert "UTC" in when_field["value"]
+        assert "EDT" in when_field["value"]
+        assert "UTC" not in when_field["value"]
 
-    def test_when_field_shows_original_timezone_label(self):
-        eastern = timezone(timedelta(hours=-5), name="EST")
-        est_start = datetime(2026, 4, 5, 19, 0, tzinfo=eastern)
-        embed = build_event_embed("Event", est_start, None, None, None, [], [], [])
+    def test_when_field_shows_est_in_winter(self):
+        winter_start = datetime(2026, 1, 15, 0, 0, tzinfo=UTC)
+        embed = build_event_embed("Event", winter_start, None, None, None, [], [], [])
         when_field = next(f for f in embed["fields"] if "📅" in f["name"])
         assert "EST" in when_field["value"]
-        assert "UTC" not in when_field["value"]
+
+    def test_when_field_ignores_a_bare_fixed_offset_and_uses_team_zone(self):
+        # A datetime round-tripped through storage (fromisoformat on a
+        # stored ISO string) carries a bare fixed-offset tzinfo with no
+        # zone name — e.g. UTC-04:00 — which is exactly the bug this
+        # guards against: strftime("%Z") on that would print "UTC-04:00"
+        # instead of resolving to a real zone abbreviation.
+        bare_offset_start = datetime(
+            2026, 4, 5, 15, 0, tzinfo=timezone(timedelta(hours=-4))
+        )
+        embed = build_event_embed(
+            "Event", bare_offset_start, None, None, None, [], [], []
+        )
+        when_field = next(f for f in embed["fields"] if "📅" in f["name"])
+        assert "EDT" in when_field["value"]
+        assert "UTC-04:00" not in when_field["value"]
 
 
 # ---------------------------------------------------------------------------

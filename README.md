@@ -432,7 +432,7 @@ When a user RSVPs via any button (accepted / declined / tentative) or is added v
 Discord modals only support plain text inputs — there's no date picker — so the modal has exactly the 5 fields Discord allows:
 
 - **Title**, **Duration (minutes)**, **Location**, **Description** — free text.
-- **Date & Time** — typed as `YYYY-MM-DD H:MM AM/PM` (e.g. `2026-08-30 7:00 PM`) and interpreted in the `TEAM_TIMEZONE` constant in `bench_boss/constants.py`. Update that constant to match your team's actual timezone.
+- **Date & Time** — typed as `YYYY-MM-DD H:MM AM/PM` (e.g. `2026-08-30 7:00 PM`) and interpreted in the `TEAM_TIMEZONE` constant in `bench_boss/constants.py`. Update that constant to match your team's actual timezone. Event embeds always display times converted into this zone with a proper abbreviation (`EST`/`EDT` for the default `America/New_York`), regardless of what timezone the event's source data carried — this applies to calendar-sourced events too.
 
 The **Description** field is auto-detected: an `http://`/`https://` value renders as the same "Game Details" link calendar-sourced events use; anything else renders as plain text.
 
