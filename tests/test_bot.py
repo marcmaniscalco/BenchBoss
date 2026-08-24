@@ -137,6 +137,27 @@ class TestPingInteraction:
 
 
 # ---------------------------------------------------------------------------
+# handle_interaction — /bb-help
+# ---------------------------------------------------------------------------
+
+
+class TestBbHelpInteraction:
+    def test_returns_channel_message_with_embed(self):
+        result = handle_interaction(
+            {"type": APPLICATION_COMMAND, "data": {"name": "bb-help"}}
+        )
+        assert result["statusCode"] == 200
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert result["body"]["data"]["embeds"][0]["title"] == "BenchBoss Help"
+
+    def test_is_ephemeral(self):
+        result = handle_interaction(
+            {"type": APPLICATION_COMMAND, "data": {"name": "bb-help"}}
+        )
+        assert result["body"]["data"]["flags"] == 64
+
+
+# ---------------------------------------------------------------------------
 # handle_interaction — /schedule
 # ---------------------------------------------------------------------------
 

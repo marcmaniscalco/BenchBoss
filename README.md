@@ -339,11 +339,12 @@ DISCORD_PUBLIC_KEY=your-qa-public-key
 
 Expected output:
 ```
-Registered 4 command(s) for qa:
+Registered 5 command(s) for qa:
   /ping — Check if the bot is alive.
   /schedule — Post the next upcoming event from a calendar.
   /events — DM you a list of all events from a calendar.
   /create-event — Create a one-off RSVP event.
+  /bb-help — Show BenchBoss commands and how to use event messages.
 ```
 
 ---
@@ -417,6 +418,10 @@ make cov
 ### README Sync
 
 Whenever `CLAUDE.md` is updated, update this `README.md` to reflect the new or changed instructions.
+
+### In-App Help
+
+`/bb-help` replies (ephemerally, only visible to whoever runs it) with a static embed listing every slash command and what each button/emoji on an event message does. Named `bb-help` rather than the generic `help` so it doesn't collide with other bots' `/help` commands in the same server's autocomplete list. It's intentionally static for now (same content regardless of who asks) — see `build_help_embed` in `bench_boss/discord_api.py` if the command set changes and this needs updating.
 
 ### Filltime Role Marking
 
