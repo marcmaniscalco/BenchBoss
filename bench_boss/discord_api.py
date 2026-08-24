@@ -303,8 +303,9 @@ def build_help_embed() -> dict:
                     "🇬 — toggle yourself as goalie (max one per event)\n"
                     "➕ / ➖ — admin: add or remove someone else's RSVP "
                     "by name/mention\n"
-                    "✏️ Edit / Delete — admins, or (for events you "
-                    "created yourself) you"
+                    "✏️ Edit — admins, or (for events you created "
+                    "yourself) you\n"
+                    "Delete — admins only"
                 ),
                 "inline": False,
             },

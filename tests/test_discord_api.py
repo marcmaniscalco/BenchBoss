@@ -526,6 +526,21 @@ class TestBuildHelpEmbed:
         assert "Edit" in controls_field["value"]
         assert "Delete" in controls_field["value"]
 
+    def test_delete_is_described_as_admin_only_not_creator(self):
+        # _handle_delete (bot.py) only checks _is_admin, with no creator
+        # exception — unlike _handle_edit_event_button, which allows the
+        # event's creator too. The two must not be described identically.
+        embed = build_help_embed()
+        controls_field = next(
+            f for f in embed["fields"] if f["name"] == "On an Event Message"
+        )
+        lines = controls_field["value"].split("\n")
+        delete_line = next(line for line in lines if "Delete" in line)
+        edit_line = next(line for line in lines if "Edit" in line)
+        assert "created yourself" not in delete_line
+        assert "admin" in delete_line.lower()
+        assert "created yourself" in edit_line
+
     def test_goalie_emoji_matches_the_goalie_button(self):
         # Same character used on the actual goalie button/field elsewhere
         # (discord_api.py's build_rsvp_components / build_event_embed) —
