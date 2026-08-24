@@ -2,6 +2,9 @@
 
 from datetime import UTC, datetime
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
+
+from bench_boss.constants import TEAM_TIMEZONE
 
 BLURPLE = 0x5865F2
 
@@ -32,7 +35,11 @@ def _ensure_tz(dt: datetime) -> datetime:
 
 
 def _format_dt(start: datetime, end: datetime | None) -> str:
-    start = _ensure_tz(start)
+    # A datetime round-tripped through storage carries a bare fixed-offset
+    # tzinfo (e.g. UTC-04:00) with no zone name, so strftime("%Z") would
+    # print that offset instead of an abbreviation. Re-attach the team's
+    # real zone so it resolves to EST/EDT (DST-correct for the given date).
+    start = _ensure_tz(start).astimezone(ZoneInfo(TEAM_TIMEZONE))
     tz_label = start.strftime("%Z") or "UTC"
     hour = start.hour % 12 or 12
     minute = start.strftime("%M")
