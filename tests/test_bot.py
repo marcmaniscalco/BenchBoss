@@ -21,6 +21,7 @@ from bench_boss.bot import (
     _get_user_id,
     _parse_duration_minutes,
     _parse_event_datetime,
+    _parse_event_modal_fields,
     _send_dm_events,
     _update_channel_message,
     handle_interaction,
@@ -1716,6 +1717,47 @@ class TestParseDurationMinutes:
         assert _parse_duration_minutes("soon") is None
 
 
+class TestParseEventModalFields:
+    def _fields(self, **overrides):
+        defaults = {
+            "name": "Scrimmage",
+            "datetime": "2026-08-30 07:00 PM",
+            "duration": "90",
+            "location": "Rink 1",
+            "description": "Bring pads",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_valid_fields_returns_parsed_with_no_error(self):
+        parsed, error, error_field = _parse_event_modal_fields(self._fields())
+        assert error is None
+        assert error_field is None
+        assert parsed["name"] == "Scrimmage"
+
+    def test_blank_name_reports_name_field(self):
+        parsed, error, error_field = _parse_event_modal_fields(self._fields(name="  "))
+        assert parsed is None
+        assert error_field == "name"
+        assert "title" in error.lower()
+
+    def test_bad_datetime_reports_datetime_field(self):
+        parsed, error, error_field = _parse_event_modal_fields(
+            self._fields(datetime="garbage")
+        )
+        assert parsed is None
+        assert error_field == "datetime"
+        assert "date/time" in error.lower()
+
+    def test_bad_duration_reports_duration_field(self):
+        parsed, error, error_field = _parse_event_modal_fields(
+            self._fields(duration="soon")
+        )
+        assert parsed is None
+        assert error_field == "duration"
+        assert "duration" in error.lower()
+
+
 class TestGetUserId:
     def test_extracts_from_guild_member(self):
         body = {"member": {"user": {"id": "user1"}}}
@@ -1936,17 +1978,37 @@ class TestCreateEventModalSubmit:
         assert result["body"]["data"]["embeds"][0]["title"] == "Scrimmage"
         assert "components" in result["body"]["data"]
 
-    def test_blank_title_returns_ephemeral_error(self):
+    def _modal_field(self, result, custom_id):
+        return next(
+            comp
+            for row in result["body"]["data"]["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == custom_id
+        )
+
+    def test_blank_title_reopens_modal_with_error_on_name(self):
         with patch("bench_boss.bot.save_event") as mock_save:
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal", name="  "),
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["data"]["flags"] == 64
-        assert "title" in result["body"]["data"]["content"].lower()
+        assert result["body"]["type"] == MODAL
+        assert result["body"]["data"]["custom_id"] == "create_event_modal"
+        name_field = self._modal_field(result, "name")
+        assert name_field["label"].startswith("🔴*")
+        assert "title" in name_field["placeholder"].lower()
 
-    def test_bad_datetime_returns_ephemeral_error(self):
+    def test_blank_title_preserves_other_field_values(self):
+        with patch("bench_boss.bot.save_event"):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal", name="  "),
+                bot_token="tok",
+            )
+        assert self._modal_field(result, "location")["value"] == "Rink 1"
+        assert self._modal_field(result, "duration")["value"] == "90"
+
+    def test_bad_datetime_reopens_modal_with_error_on_datetime(self):
         with patch("bench_boss.bot.save_event") as mock_save:
             result = handle_interaction(
                 make_event_modal_submit_body(
@@ -1955,27 +2017,33 @@ class TestCreateEventModalSubmit:
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["data"]["flags"] == 64
-        assert "date/time" in result["body"]["data"]["content"].lower()
+        assert result["body"]["type"] == MODAL
+        datetime_field = self._modal_field(result, "datetime")
+        assert datetime_field["label"].startswith("🔴*")
+        assert datetime_field["value"] == "not a date"
+        assert "date/time" in datetime_field["placeholder"].lower()
 
-    def test_bad_duration_returns_ephemeral_error(self):
+    def test_bad_duration_reopens_modal_with_error_on_duration(self):
         with patch("bench_boss.bot.save_event") as mock_save:
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal", duration="soon"),
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["data"]["flags"] == 64
-        assert "duration" in result["body"]["data"]["content"].lower()
+        assert result["body"]["type"] == MODAL
+        duration_field = self._modal_field(result, "duration")
+        assert duration_field["label"].startswith("🔴*")
+        assert "duration" in duration_field["placeholder"].lower()
 
-    def test_negative_duration_returns_ephemeral_error(self):
+    def test_negative_duration_reopens_modal_with_error(self):
         with patch("bench_boss.bot.save_event") as mock_save:
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal", duration="-5"),
                 bot_token="tok",
             )
         mock_save.assert_not_called()
-        assert result["body"]["data"]["flags"] == 64
+        assert result["body"]["type"] == MODAL
+        assert self._modal_field(result, "duration")["label"].startswith("🔴*")
 
     def test_blank_location_and_description_are_omitted(self):
         with patch("bench_boss.bot.save_event") as mock_save:
@@ -2020,7 +2088,7 @@ class TestEditEventModalSubmit:
         assert result["body"]["data"]["flags"] == 64
         assert "not found" in result["body"]["data"]["content"].lower()
 
-    def test_bad_datetime_does_not_call_update_event(self):
+    def test_bad_datetime_reopens_modal_with_error_on_datetime(self):
         with patch("bench_boss.bot.update_event") as mock_update:
             result = handle_interaction(
                 make_event_modal_submit_body(
@@ -2029,4 +2097,13 @@ class TestEditEventModalSubmit:
                 bot_token="tok",
             )
         mock_update.assert_not_called()
-        assert result["body"]["data"]["flags"] == 64
+        assert result["body"]["type"] == MODAL
+        assert result["body"]["data"]["custom_id"] == "edit_event_modal:test-key"
+        datetime_field = next(
+            comp
+            for row in result["body"]["data"]["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "datetime"
+        )
+        assert datetime_field["label"].startswith("🔴*")
+        assert datetime_field["value"] == "garbage"

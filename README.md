@@ -436,6 +436,8 @@ Discord modals only support plain text inputs — there's no date picker — so 
 
 The **Description** field is auto-detected: an `http://`/`https://` value renders as the same "Game Details" link calendar-sourced events use; anything else renders as plain text.
 
+If a submission fails validation (missing title, unparseable date/time, or a non-positive duration), the bot reopens the same modal instead of closing it — every field you already typed is preserved, and the one that failed is flagged with a 🔴* on its label plus advice about the problem swapped into its placeholder text.
+
 ---
 
 ## Part 5 — Adding Commands

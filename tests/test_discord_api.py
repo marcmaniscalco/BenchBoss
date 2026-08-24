@@ -601,3 +601,56 @@ class TestBuildEventModal:
         assert components["name"]["value"] == "Scrimmage"
         assert "value" not in components["location"]
         assert "value" not in components["description"]
+
+    def test_error_field_gets_red_asterisk_label(self):
+        modal = build_event_modal(error_field="datetime", error_message="Bad date.")
+        components = {
+            comp["custom_id"]: comp
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert components["datetime"]["label"].startswith("🔴*")
+        assert components["datetime"]["placeholder"] == "Bad date."
+
+    def test_error_field_does_not_affect_other_labels(self):
+        modal = build_event_modal(error_field="datetime", error_message="Bad date.")
+        components = {
+            comp["custom_id"]: comp
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert not components["name"]["label"].startswith("🔴*")
+        assert not components["duration"]["label"].startswith("🔴*")
+
+    def test_error_message_is_truncated_to_placeholder_limit(self):
+        long_message = "x" * 150
+        modal = build_event_modal(error_field="name", error_message=long_message)
+        components = {
+            comp["custom_id"]: comp
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert len(components["name"]["placeholder"]) == 100
+
+    def test_no_error_field_leaves_labels_untouched(self):
+        modal = build_event_modal()
+        for row in modal["components"]:
+            for comp in row["components"]:
+                assert not comp["label"].startswith("🔴*")
+
+    def test_error_field_combines_with_prefill(self):
+        prefill = {"name": "Scrimmage", "datetime": "not a date"}
+        modal = build_event_modal(
+            "key1",
+            prefill=prefill,
+            error_field="datetime",
+            error_message="Could not parse date/time.",
+        )
+        components = {
+            comp["custom_id"]: comp
+            for row in modal["components"]
+            for comp in row["components"]
+        }
+        assert components["datetime"]["value"] == "not a date"
+        assert components["datetime"]["label"].startswith("🔴*")
+        assert components["name"]["value"] == "Scrimmage"

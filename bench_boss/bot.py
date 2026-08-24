@@ -557,40 +557,49 @@ def _extract_modal_fields(body: dict) -> dict:
     }
 
 
-def _parse_event_modal_fields(fields: dict) -> tuple[dict | None, str | None]:
+def _parse_event_modal_fields(
+    fields: dict,
+) -> tuple[dict | None, str | None, str | None]:
     """
     Validate and parse the create/edit event modal fields.
 
-    Returns (parsed, None) on success, where parsed has keys
-    name/start/end/location/description, or (None, error_message) on
-    validation failure.
+    Returns (parsed, None, None) on success, where parsed has keys
+    name/start/end/location/description, or (None, error_message,
+    error_field) on validation failure, where error_field is the
+    custom_id of the input that failed validation.
     """
     name = fields.get("name", "").strip()
     if not name:
-        return None, "Title is required."
+        return None, "Title is required.", "name"
 
     start = _parse_event_datetime(fields.get("datetime", ""))
     if start is None:
-        return None, (
+        return (
+            None,
             "Could not parse date/time — use format YYYY-MM-DD H:MM AM/PM "
-            "(e.g. 2026-08-30 7:00 PM)."
+            "(e.g. 2026-08-30 7:00 PM).",
+            "datetime",
         )
 
     duration = _parse_duration_minutes(fields.get("duration", ""))
     if duration is None:
-        return None, "Duration must be a positive number of minutes."
+        return None, "Duration must be a positive number of minutes.", "duration"
 
     end = start + timedelta(minutes=duration)
     location = fields.get("location", "").strip() or None
     description = fields.get("description", "").strip() or None
 
-    return {
-        "name": name,
-        "start": start,
-        "end": end,
-        "location": location,
-        "description": description,
-    }, None
+    return (
+        {
+            "name": name,
+            "start": start,
+            "end": end,
+            "location": location,
+            "description": description,
+        },
+        None,
+        None,
+    )
 
 
 def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | None:
@@ -747,9 +756,17 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
 
 def _handle_create_event_submit(body: dict) -> dict:
     fields = _extract_modal_fields(body)
-    parsed, error = _parse_event_modal_fields(fields)
+    parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:
-        return _ephemeral(error)
+        return {
+            "statusCode": 200,
+            "body": {
+                "type": MODAL,
+                "data": build_event_modal(
+                    prefill=fields, error_field=error_field, error_message=error
+                ),
+            },
+        }
 
     event_key = str(uuid.uuid4())
 
@@ -797,9 +814,20 @@ def _handle_create_event_submit(body: dict) -> dict:
 def _handle_edit_event_submit(body: dict, bot_token: str) -> dict:
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     fields = _extract_modal_fields(body)
-    parsed, error = _parse_event_modal_fields(fields)
+    parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:
-        return _ephemeral(error)
+        return {
+            "statusCode": 200,
+            "body": {
+                "type": MODAL,
+                "data": build_event_modal(
+                    event_key,
+                    prefill=fields,
+                    error_field=error_field,
+                    error_message=error,
+                ),
+            },
+        }
 
     try:
         event = update_event(
