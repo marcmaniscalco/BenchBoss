@@ -498,6 +498,11 @@ from **Part 2**/**3.1** (the same `.env` credentials work here) rather than
 creating a second one, unless you specifically want to keep local and
 sandbox testing on separate Discord apps.
 
+> Reusing the same app means local (ngrok) and sandbox (Lambda) testing
+> share one **Interactions Endpoint URL** field — deploying your sandbox
+> (**6.3**) repoints it at the Lambda URL, so local dev (**Part 4**) will
+> stop responding until you paste a fresh ngrok URL back in.
+
 Install the AWS CLI and SAM CLI:
 
 ```powershell
