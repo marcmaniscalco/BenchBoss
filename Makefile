@@ -1,4 +1,4 @@
-.PHONY: install test cov lint lint-fix format pre-commit-install pre-commit-run secrets-scan secrets-audit dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy pr-pipeline-deploy
+.PHONY: install test cov lint lint-fix format pre-commit-install pre-commit-run secrets-scan secrets-audit dynamo-up dynamo-down dynamo-init local register register-qa build deploy pipeline-deploy
 
 -include .env
 export
@@ -6,7 +6,6 @@ export
 AWS_REGION ?= us-east-1
 STACK_NAME ?= bench-boss
 PIPELINE_STACK_NAME ?= bench-boss-pipeline
-PR_PIPELINE_STACK_NAME ?= bench-boss-pr-pipeline
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
@@ -108,16 +107,5 @@ pipeline-deploy:
 	aws cloudformation deploy \
 		--template-file infrastructure/pipeline.yaml \
 		--stack-name $(PIPELINE_STACK_NAME) \
-		--region $(AWS_REGION) \
-		--capabilities CAPABILITY_IAM
-
-# Deploy the PR pipeline stack. Run once; afterwards every PR opened/updated
-# against main runs lint/format/secrets/tests and deploys to QA only — no
-# approval stage, no Prod stage. Requires the QA Secrets Manager secret to
-# already exist (see README Part 7.2).
-pr-pipeline-deploy:
-	aws cloudformation deploy \
-		--template-file infrastructure/pr-pipeline.yaml \
-		--stack-name $(PR_PIPELINE_STACK_NAME) \
 		--region $(AWS_REGION) \
 		--capabilities CAPABILITY_IAM

@@ -33,8 +33,7 @@ BenchBoss/
 │   └── create_local_table.py   # One-time script to create the local DynamoDB table
 ├── infrastructure/
 │   ├── template.yaml       # SAM template (Lambda + DynamoDB)
-│   ├── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> approval -> Prod)
-│   └── pr-pipeline.yaml    # CodePipeline for PRs (any PR -> QA only, no Prod)
+│   └── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> approval -> Prod)
 ├── buildspec.yml               # CodeBuild instructions for the pipeline
 ├── lambda_function.py          # Interactions Lambda entry point (Function URL)
 ├── stream_lambda_handler.py    # Stream Lambda entry point (DynamoDB Streams)
@@ -543,9 +542,6 @@ QA and Prod deploy to the **same AWS account** but to separate CloudFormation
 stacks, with separate Discord apps/tokens supplied per stage from
 **AWS Secrets Manager**.
 
-There's also a second, independent pipeline (`infrastructure/pr-pipeline.yaml`)
-that deploys any open PR straight to QA, with no path to Prod — see **7.6**.
-
 > CodeBuild's source is a plain zip snapshot from GitHub (no `.git`
 > directory), so the build can't reuse the `detect-secrets` pre-commit hook
 > directly — that hook shells out to git internally. `check_secrets_baseline.py`
@@ -682,63 +678,24 @@ necessarily the latest commit, with nothing to show for what happened to
 the commits in between. `QUEUED` processes executions FIFO, one fully at a
 time, so what you approve is always exactly the commit you were shown.
 
-### 7.6 PR Pipeline (deploy any PR to QA)
-
-`infrastructure/pr-pipeline.yaml` is a **second, independent CodePipeline**
-that lets you test a pull request's actual code in QA before it's merged,
-without ever risking Prod:
-
-- **Triggers on PR open/update** — a CodePipeline V2 `pullRequest` trigger
-  (not a branch push) fires for any PR targeting `main`, regardless of what
-  the source branch is named. Ordinary pushes to `main` do **not** trigger
-  this pipeline (that's still `bench-boss-pipeline`'s job).
-- **Same Build stage** — reuses the same `buildspec.yml` (lint, format,
-  secrets scan, tests, `sam build`/`sam package`), so a PR fails the same way
-  here as it does in the required GitHub Actions check.
-- **DeployQA only — no approval stage, no Prod stage.** Its CloudFormation
-  deploy role is IAM-scoped so `cloudformation:*` only works against the
-  `bench-boss-qa` stack's ARN — it cannot `CreateStack`/`UpdateStack` on
-  `bench-boss-prod` or any other stack, regardless of what the pipeline
-  definition says. The underlying Lambda/DynamoDB/IAM/Logs permissions are
-  further scoped to resource names CloudFormation prefixes with the QA stack
-  name.
-- **Deploys to the same shared `bench-boss-qa` stack** as the main pipeline
-  — this is one QA environment, not one per PR. Whichever PR (or `main`
-  merge) deployed most recently is what's live; two people testing different
-  PRs in QA at the same time will overwrite each other. `ExecutionMode:
-  QUEUED` at least serializes concurrent PR-triggered deploys instead of
-  racing them.
-
-Deploy it once:
-
-```powershell
-make pr-pipeline-deploy
-```
-
-This reuses the same `GitHubConnectionArn` and `bench-boss/qa` secret as
-the main pipeline — no additional one-time setup needed if you've already
-done **7.1–7.3**.
-
-### 7.7 Cost
+### 7.6 Cost
 
 At low commit volume the pipeline is roughly **$2–3/month** (CodePipeline
 flat fee + a handful of build minutes + two Secrets Manager secrets). The
-GitHub CodeStar connection itself is free. The PR pipeline (7.6) adds
-another CodePipeline flat fee plus its own build minutes.
+GitHub CodeStar connection itself is free.
 
-### 7.8 Tearing it all down
+### 7.7 Tearing it all down
 
 ```powershell
 aws cloudformation delete-stack --stack-name bench-boss-prod --region us-east-1
 aws cloudformation delete-stack --stack-name bench-boss-qa --region us-east-1
 aws cloudformation delete-stack --stack-name bench-boss-pipeline --region us-east-1
-aws cloudformation delete-stack --stack-name bench-boss-pr-pipeline --region us-east-1
 aws secretsmanager delete-secret --secret-id bench-boss/qa --force-delete-without-recovery --region us-east-1
 aws secretsmanager delete-secret --secret-id bench-boss/prod --force-delete-without-recovery --region us-east-1
 ```
 
-> Both pipelines' S3 artifact buckets must be emptied before their stacks
-> will delete cleanly. Either empty them from the console or run
+> The pipeline's S3 artifact bucket must be emptied before its stack will
+> delete cleanly. Either empty it from the console or run
 > `aws s3 rm s3://<artifact-bucket-name> --recursive` first.
 
 ---
