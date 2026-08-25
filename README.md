@@ -463,16 +463,40 @@ If a submission fails validation (missing title, unparseable date/time, or a non
 
 ---
 
-## Part 6 — Deploy to AWS (Production)
+## Part 6 — Deploy Your Own Sandbox Stack
+
+`bench-boss-qa` and `bench-boss-prod` (**Part 7**) only get touched by a
+merge to `main` — opening a PR doesn't deploy anywhere shared. To verify a
+change actually works on real Lambda/DynamoDB (SnapStart cold-start
+behavior, the DynamoDB Streams trigger, the Function URL) rather than just
+the local Flask/DynamoDB-Local setup in **Part 4**, deploy it to your own
+stack in your own AWS account before opening a PR. This is a completely
+separate, personal stack — it has no connection to `bench-boss-qa` or
+`bench-boss-prod` and can't affect either.
+
+Once you open the PR, `.github/workflows/pr-checks.yml` (lint, format,
+secrets scan, tests) and the Claude Code Action review (**Part 8**) both run
+automatically — no AWS involved. Branch protection on `main` requires the
+`checks` job to pass and a CODEOWNERS approval before it can merge; nothing
+you do in your sandbox stack is checked automatically, so mention what you
+tested in the PR description.
 
 The bot runs as two **AWS Lambda** functions deployed via SAM:
 
 - `BenchBossFunction` — handles Discord interactions via a public Function URL.
 - `BenchBossStreamFunction` — triggered by the DynamoDB table's stream when a TTL'd event row is removed.
 
-Both functions have **SnapStart** enabled, so the published `live` alias serves restored snapshots in ~200–400ms instead of a full cold start. There is no ALB, VPC, ECS service, or NAT gateway — total infra cost at this volume is effectively $0.
+Both functions have **SnapStart** enabled, so the published `live` alias serves restored snapshots in ~200–400ms instead of a full cold start. There is no ALB, VPC, ECS service, or NAT gateway.
 
 ### 6.1 Prerequisites
+
+If you don't already have one, create a free AWS account at
+https://aws.amazon.com/free.
+
+You'll also want your own Discord application for this — reuse the one
+from **Part 2**/**3.1** (the same `.env` credentials work here) rather than
+creating a second one, unless you specifically want to keep local and
+sandbox testing on separate Discord apps.
 
 Install the AWS CLI and SAM CLI:
 
@@ -492,7 +516,7 @@ aws configure
 make deploy
 ```
 
-This runs `sam build` (packaging code + dependencies into a zip) and then `sam deploy`. SAM provisions an S3 bucket for artifacts automatically (`--resolve-s3`).
+This runs `sam build` (packaging code + dependencies into a zip) and then `sam deploy`. SAM provisions an S3 bucket for artifacts automatically (`--resolve-s3`). It reads `DISCORD_PUBLIC_KEY`/`DISCORD_TOKEN` from `.env` and deploys a stack named `bench-boss` (override with `make deploy STACK_NAME=your-stack-name` if you want a different name — there's no collision risk either way since this is your own AWS account).
 
 After it finishes, the stack outputs the interactions endpoint:
 
@@ -515,6 +539,21 @@ make deploy
 ```
 
 SAM diffs the template and code, ships only what changed. Each deploy publishes a new Lambda version; SnapStart re-snapshots automatically when the version is published, so cold starts stay fast.
+
+### 6.5 Cost
+
+At personal-testing volume this is a few cents a month at most — Lambda and
+DynamoDB are both pay-per-request with generous free tiers, and there's no
+ALB/VPC/NAT to pay for. The one thing that isn't part of the standard
+Lambda free tier is **SnapStart's snapshot cache**, billed per GB-second
+while a snapshot exists — negligible for a single low-traffic bot, but it's
+the one line item here you won't see on a typical "free tier Lambda"
+function. Tear down your sandbox stack when you're done with it if you want
+to avoid even that:
+
+```powershell
+aws cloudformation delete-stack --stack-name bench-boss --region us-east-1
+```
 
 ---
 
