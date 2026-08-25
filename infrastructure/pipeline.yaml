@@ -201,10 +201,22 @@ Resources:
   # that parameter's description). An authorized-but-not-installed connection
   # can still pull source, so this silently degrades to manual-start-only
   # instead of failing loudly.
+  #
+  # V2 + QUEUED (not the V1 default of SUPERSEDED): ApproveProd is a manual
+  # gate that can sit unapproved for days. Under SUPERSEDED, a newer push
+  # doesn't preempt an execution already parked in that gate waiting on a
+  # human — it just piles up every commit in between into a single
+  # "next in line" execution, discarding the individual ones. So approving
+  # a long-stale gate deploys whatever was sitting there, not the latest
+  # commit, and everything in between silently vanishes rather than getting
+  # its own turn. QUEUED processes each execution FIFO, one fully at a time,
+  # so what you approve is always exactly what you were shown.
   # ────────────────────────────────────────────────────────────────────────────
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
+      PipelineType: V2
+      ExecutionMode: QUEUED
       RoleArn: !GetAtt PipelineRole.Arn
       ArtifactStore:
         Type: S3

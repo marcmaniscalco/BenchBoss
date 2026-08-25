@@ -671,6 +671,17 @@ If you want to abandon a build instead of promoting it, click **Reject** on
 the approval action — the pipeline run ends, and the next push starts a
 fresh execution.
 
+The pipeline runs `PipelineType: V2` / `ExecutionMode: QUEUED` (not the V1
+default of `SUPERSEDED`), specifically because of **ApproveProd**: it's a
+manual gate that can sit unapproved for a while, and under `SUPERSEDED` a
+newer push doesn't preempt an execution already parked there waiting on a
+human — every commit that lands in the meantime just collapses into one
+"next in line" execution while the earlier ones vanish. So approving a
+stale gate deploys whatever was sitting there when you clicked, not
+necessarily the latest commit, with nothing to show for what happened to
+the commits in between. `QUEUED` processes executions FIFO, one fully at a
+time, so what you approve is always exactly the commit you were shown.
+
 ### 7.6 PR Pipeline (deploy any PR to QA)
 
 `infrastructure/pr-pipeline.yaml` is a **second, independent CodePipeline**
