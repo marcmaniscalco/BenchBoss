@@ -1,5 +1,7 @@
 # BenchBoss — Discord Bot on AWS Lambda (SnapStart)
 
+> This project is developed in a private repository. [BenchBoss-mirror](https://github.com/marcmaniscalco/BenchBoss-mirror) is a read-only public mirror of `main`, synced automatically — issues and pull requests are not accepted there (or here).
+
 A Python Discord bot deployed as two SnapStart Lambdas:
 
 - **Interactions Lambda** — invoked via a public Function URL on every slash command / button / modal submit.
