@@ -6,11 +6,11 @@
 - [ ] Support scheduling multiple upcoming events (currently only posts the next one)
 - [X] Edit / reschedule an existing event
 - [ ] Reminder notifications before event start
-- [ ] Automatically delete expired events and recreate recurring ones without significant cost increase (investigate EventBridge Scheduler or DynamoDB TTL-triggered Lambda)
+- [X] Automatically delete expired events and recreate recurring ones without significant cost increase (investigate EventBridge Scheduler or DynamoDB TTL-triggered Lambda)
 
 ## Infrastructure
 - [X] Migrate from ECS + ALB back to Lambda + Function URL to eliminate ~$28/month in ALB/ECS/NAT costs
-- [ ] Add CI pipeline (lint, test, deploy)
+- [X] Add CI pipeline (lint, test, deploy)
 - [ ] Environment variable validation on startup
 - [ ] Stop exposing Discord tokens via CodePipeline execution history — `pipeline.yaml` (DeployQA `infrastructure/pipeline.yaml:262-263`, DeployProd `infrastructure/pipeline.yaml:295-296`) resolves `{{resolve:secretsmanager:...}}` in the deploy action's `ParameterOverrides`, so every deploy's resolved token is visible in plaintext via `ListActionExecutions`/`GetPipelineExecution` to anyone with pipeline read access.
   - **Weaker option (rejected — don't do this)**: have `template.yaml` build the `{{resolve:secretsmanager:...}}` reference itself instead of the pipeline, so it never appears in `ParameterOverrides`. Closes the CodePipeline avenue only — the resolved value still ends up in the Lambda's env var, still readable in plaintext via `lambda:GetFunctionConfiguration`/`GetFunction` to anyone with that IAM permission. No better than today on that front.
