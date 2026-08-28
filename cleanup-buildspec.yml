@@ -1,0 +1,13 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.13
+    commands:
+      - pip install --upgrade pip pipenv
+      - pipenv install --deploy
+
+  build:
+    commands:
+      - pipenv run python cleanup_lambda_versions.py --stack-name "$STACK_NAME"
