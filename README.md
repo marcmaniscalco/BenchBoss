@@ -27,14 +27,17 @@ BenchBoss/
 │   ├── test_stream_handler.py
 │   ├── test_lambda_function.py
 │   └── test_stream_lambda_handler.py
+├── tests_integration/
+│   └── qa_smoke_test.py    # Post-deploy smoke test against the live QA Function URL
 ├── local/
 │   ├── docker-compose.yml      # DynamoDB Local + Admin UI
 │   ├── local_server.py         # Flask server for local Discord testing via ngrok
 │   └── create_local_table.py   # One-time script to create the local DynamoDB table
 ├── infrastructure/
 │   ├── template.yaml       # SAM template (Lambda + DynamoDB)
-│   └── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> approval -> Prod)
-├── buildspec.yml               # CodeBuild instructions for the pipeline
+│   └── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> integration test -> approval -> Prod)
+├── buildspec.yml               # CodeBuild instructions for the Build stage
+├── integration-buildspec.yml   # CodeBuild instructions for the IntegrationTest stage
 ├── lambda_function.py          # Interactions Lambda entry point (Function URL)
 ├── stream_lambda_handler.py    # Stream Lambda entry point (DynamoDB Streams)
 ├── register_commands.py        # One-time script to register slash commands with Discord
@@ -527,13 +530,17 @@ CloudFormation stack that creates:
 - A CodeBuild project that runs `ruff check`, `ruff format --check`, a
   `detect-secrets` scan, `pytest --cov`, and `sam build`/`sam package` — a
   failure in any check fails the build before it deploys anywhere
-- A CodePipeline with five stages:
+- A CodePipeline with six stages:
   1. **Source** — pulls from GitHub (`marcmaniscalco/BenchBoss`, `main` branch) via a
      CodeStar Connections GitHub App connection
   2. **Build** — runs lint + unit tests, then packages the Lambdas
   3. **DeployQA** — applies the SAM template as `bench-boss-qa`
-  4. **ApproveProd** — manual approval gate (you click **Approve** in the console)
-  5. **DeployProd** — applies the same template as `bench-boss-prod`
+  4. **IntegrationTest** — signs real Discord-shaped interaction payloads with
+     a QA-only test keypair and POSTs them straight to the deployed QA
+     Lambda's Function URL, asserting on the responses. A failure here fails
+     the pipeline and blocks **ApproveProd** — see **7.2b**
+  5. **ApproveProd** — manual approval gate (you click **Approve** in the console)
+  6. **DeployProd** — applies the same template as `bench-boss-prod`
 - A GitHub webhook (registered automatically by the CodeStar connection) that
   triggers the pipeline on every push to `main`
 - An S3 bucket for build artifacts (30-day lifecycle)
@@ -576,6 +583,34 @@ aws secretsmanager create-secret `
 
 To rotate credentials later, use `aws secretsmanager update-secret` with the
 same `--secret-string` shape.
+
+### 7.2b Create the QA test-signing secret
+
+The **IntegrationTest** stage needs to sign requests the same way Discord
+does (Ed25519 over `timestamp + body`), but Discord's own private signing
+key never leaves Discord — there's no way to forge a signature for the real
+`DiscordPublicKey`. Instead, the QA Lambda is configured (via the
+`TestPublicKey` template parameter, QA only — Prod never gets it) to also
+accept a second keypair that we hold both halves of, generated once and
+stored in its own secret, separate from `bench-boss/qa` so the integration
+test role never has access to the real Discord bot token:
+
+```powershell
+pipenv run python -c "from nacl.signing import SigningKey; k = SigningKey.generate(); print('public:', bytes(k.verify_key).hex()); print('private:', bytes(k).hex())"
+```
+
+```powershell
+aws secretsmanager create-secret `
+  --name bench-boss/qa-test-signing-key `
+  --region us-east-1 `
+  --secret-string '{\"TestPublicKey\":\"<public-from-above>\",\"TestSigningPrivateKey\":\"<private-from-above>\"}'
+```
+
+This is a one-time setup step — the pipeline reads `TestPublicKey` into the
+QA stack's `TestPublicKey` parameter and `TestSigningPrivateKey` is fetched
+at build time by the IntegrationTest stage. Rotate it the same way as the
+other secrets (`update-secret` with a freshly generated pair); nothing else
+needs to change.
 
 ### 7.3 Bootstrap the pipeline
 
@@ -658,10 +693,14 @@ Then push any commit to `main` to run the pipeline again.
 ### 7.5 Approve a production release
 
 1. Open the AWS Console → **CodePipeline** → `bench-boss-pipeline`
-2. Wait for **DeployQA** to go green
+2. Wait for **DeployQA** and **IntegrationTest** to go green
 3. Test the QA bot in your QA Discord server
 4. Click **Review** on the **ApproveProd** stage → **Approve**
 5. The **DeployProd** stage runs and updates the prod stack
+
+If **IntegrationTest** fails, the pipeline stops before **ApproveProd** —
+check the CodeBuild logs for that stage (each check prints `PASS`/`FAIL`
+with the response it got) before approving anything.
 
 If you want to abandon a build instead of promoting it, click **Reject** on
 the approval action — the pipeline run ends, and the next push starts a
@@ -681,7 +720,7 @@ time, so what you approve is always exactly the commit you were shown.
 ### 7.6 Cost
 
 At low commit volume the pipeline is roughly **$2–3/month** (CodePipeline
-flat fee + a handful of build minutes + two Secrets Manager secrets). The
+flat fee + a handful of build minutes + three Secrets Manager secrets). The
 GitHub CodeStar connection itself is free.
 
 ### 7.7 Tearing it all down
@@ -692,6 +731,7 @@ aws cloudformation delete-stack --stack-name bench-boss-qa --region us-east-1
 aws cloudformation delete-stack --stack-name bench-boss-pipeline --region us-east-1
 aws secretsmanager delete-secret --secret-id bench-boss/qa --force-delete-without-recovery --region us-east-1
 aws secretsmanager delete-secret --secret-id bench-boss/prod --force-delete-without-recovery --region us-east-1
+aws secretsmanager delete-secret --secret-id bench-boss/qa-test-signing-key --force-delete-without-recovery --region us-east-1
 ```
 
 > The pipeline's S3 artifact bucket must be emptied before its stack will

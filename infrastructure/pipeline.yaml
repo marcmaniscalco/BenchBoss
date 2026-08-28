@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: BenchBoss CI/CD pipeline — GitHub -> Build -> Deploy QA -> Manual Approval -> Deploy Prod
+Description: BenchBoss CI/CD pipeline — GitHub -> Build -> Deploy QA -> Integration Test -> Manual Approval -> Deploy Prod
 
 Parameters:
   GitHubOwner:
@@ -27,6 +27,15 @@ Parameters:
     Type: String
     Default: bench-boss/prod
     Description: Secrets Manager secret holding Prod Discord credentials as JSON
+  QaTestSigningSecretName:
+    Type: String
+    Default: bench-boss/qa-test-signing-key
+    Description: >-
+      Secrets Manager secret holding the QA-only Ed25519 test-signing keypair
+      (TestPublicKey, TestSigningPrivateKey) used by the IntegrationTest
+      stage to sign real requests against the deployed QA Lambda. Separate
+      from QaSecretName so the integration test role never needs access to
+      the real Discord bot token.
   GitHubConnectionArn:
     Type: String
     Default: arn:aws:codeconnections:us-east-1:629520208838:connection/20e2ba2a-cd39-4912-850c-004bf1461bb7
@@ -121,6 +130,65 @@ Resources:
         BuildSpec: buildspec.yml
 
   # ────────────────────────────────────────────────────────────────────────────
+  # IntegrationTest CodeBuild — runs the post-deploy QA smoke test. Scoped to
+  # its own secret (QaTestSigningSecretName) so it can never read the real
+  # Discord bot token in QaSecretName.
+  # ────────────────────────────────────────────────────────────────────────────
+  IntegrationTestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: IntegrationTestPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${QaTestSigningSecretName}-*"
+
+  IntegrationTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-integration-test"
+      ServiceRole: !GetAtt IntegrationTestRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        EnvironmentVariables:
+          - Name: QA_TEST_SIGNING_SECRET_NAME
+            Value: !Ref QaTestSigningSecretName
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: integration-buildspec.yml
+
+  # ────────────────────────────────────────────────────────────────────────────
   # CloudFormation deploy role — used by the Deploy stages to apply the SAM
   # template. Scoped to AdministratorAccess because SAM creates IAM roles,
   # Lambda functions, DynamoDB tables, event source mappings, and Function URLs.
@@ -175,7 +243,9 @@ Resources:
                 Action:
                   - codebuild:BatchGetBuilds
                   - codebuild:StartBuild
-                Resource: !GetAtt BuildProject.Arn
+                Resource:
+                  - !GetAtt BuildProject.Arn
+                  - !GetAtt IntegrationTestProject.Arn
               - Effect: Allow
                 Action:
                   - cloudformation:CreateStack
@@ -272,10 +342,28 @@ Resources:
                 ParameterOverrides: !Sub |
                   {
                     "DiscordPublicKey": "{{resolve:secretsmanager:${QaSecretName}:SecretString:DiscordPublicKey}}",
-                    "DiscordToken": "{{resolve:secretsmanager:${QaSecretName}:SecretString:DiscordToken}}"
+                    "DiscordToken": "{{resolve:secretsmanager:${QaSecretName}:SecretString:DiscordToken}}",
+                    "TestPublicKey": "{{resolve:secretsmanager:${QaTestSigningSecretName}:SecretString:TestPublicKey}}"
                   }
+                OutputFileName: output.json
               InputArtifacts:
                 - Name: BuildArtifact
+              OutputArtifacts:
+                - Name: QaStackOutput
+
+        - Name: IntegrationTest
+          Actions:
+            - Name: SmokeTest
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref IntegrationTestProject
+              InputArtifacts:
+                - Name: SourceArtifact
+                - Name: QaStackOutput
 
         - Name: ApproveProd
           Actions:
