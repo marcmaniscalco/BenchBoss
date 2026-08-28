@@ -36,6 +36,25 @@ except ImportError:
     pass
 
 
+def _signature_is_valid(raw_body: bytes, signature: str, timestamp: str) -> bool:
+    """Verify against Discord's real key, or (QA only) a second test key.
+
+    Discord's private signing key never leaves Discord, so nothing can forge
+    a valid signature for DISCORD_PUBLIC_KEY. TEST_PUBLIC_KEY is a QA-only
+    keypair we hold both halves of, letting automated integration tests sign
+    real requests and exercise this exact verification path. Read from the
+    environment per call (rather than frozen at import like the keys above)
+    so it's trivial to flip in tests without reloading the module; Prod never
+    sets it, so this is always empty and inert there.
+    """
+    if verify_signature(raw_body, signature, timestamp, DISCORD_PUBLIC_KEY):
+        return True
+    test_public_key = os.environ.get("TEST_PUBLIC_KEY", "")
+    return bool(test_public_key) and verify_signature(
+        raw_body, signature, timestamp, test_public_key
+    )
+
+
 def lambda_handler(event: dict, context) -> dict:
     headers = {k.lower(): v for k, v in event.get("headers", {}).items()}
     signature = headers.get("x-signature-ed25519", "")
@@ -47,7 +66,7 @@ def lambda_handler(event: dict, context) -> dict:
     else:
         raw_body = raw_body_str.encode()
 
-    if not verify_signature(raw_body, signature, timestamp, DISCORD_PUBLIC_KEY):
+    if not _signature_is_valid(raw_body, signature, timestamp):
         logger.warning("Invalid request signature")
         return {
             "statusCode": 401,

@@ -83,13 +83,18 @@ def _get_user_id(body: dict) -> str:
 def verify_signature(
     raw_body: bytes, signature: str, timestamp: str, public_key: str
 ) -> bool:
-    """Verify the request came from Discord using Ed25519."""
+    """Verify the request came from Discord using Ed25519.
+
+    Doesn't log on failure — the caller may try more than one key (see
+    lambda_function.py::_signature_is_valid), and a failed attempt against
+    one key isn't itself noteworthy when another key accepts the request.
+    The caller logs once, only if every key it tries fails.
+    """
     try:
         verify_key = VerifyKey(bytes.fromhex(public_key))
         verify_key.verify(timestamp.encode() + raw_body, bytes.fromhex(signature))
         return True
     except Exception:
-        logger.warning("Signature verification failed")
         return False
 
 
