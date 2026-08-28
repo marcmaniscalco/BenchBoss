@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: BenchBoss CI/CD pipeline — GitHub -> Build -> Deploy QA -> Integration Test -> Manual Approval -> Deploy Prod
+Description: BenchBoss CI/CD pipeline — GitHub -> Build -> Deploy QA -> Cleanup -> Integration Test -> Manual Approval -> Deploy Prod -> Cleanup
 
 Parameters:
   GitHubOwner:
@@ -189,6 +189,84 @@ Resources:
         BuildSpec: integration-buildspec.yml
 
   # ────────────────────────────────────────────────────────────────────────────
+  # Cleanup CodeBuild — deletes unused Lambda versions after every deploy, so
+  # SnapStart doesn't keep billing to cache snapshots nobody uses. Shared by
+  # both CleanupQA and CleanupProd stages (STACK_NAME set per-action via
+  # EnvironmentVariables override) rather than one project per stage.
+  # ────────────────────────────────────────────────────────────────────────────
+  CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CleanupPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStackResources
+                Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${QaStackName}/*"
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProdStackName}/*"
+              - Effect: Allow
+                Action:
+                  - lambda:GetAlias
+                  - lambda:ListVersionsByFunction
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${QaStackName}-*"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProdStackName}-*"
+              # Trailing :* requires a qualifier (version/alias) in the request's
+              # resource ARN — Lambda authorizes DeleteFunction by comparing the
+              # policy Resource against both FunctionName and Qualifier, so an
+              # unqualified DeleteFunction call (which deletes the whole function,
+              # not one version) resolves to the bare function ARN and is denied
+              # here, even though this role is otherwise trusted with
+              # DeleteFunction on these functions.
+              - Effect: Allow
+                Action:
+                  - lambda:DeleteFunction
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${QaStackName}-*:*"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProdStackName}-*:*"
+
+  CleanupProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-cleanup"
+      ServiceRole: !GetAtt CleanupRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: cleanup-buildspec.yml
+
+  # ────────────────────────────────────────────────────────────────────────────
   # CloudFormation deploy role — used by the Deploy stages to apply the SAM
   # template. Scoped to AdministratorAccess because SAM creates IAM roles,
   # Lambda functions, DynamoDB tables, event source mappings, and Function URLs.
@@ -246,6 +324,7 @@ Resources:
                 Resource:
                   - !GetAtt BuildProject.Arn
                   - !GetAtt IntegrationTestProject.Arn
+                  - !GetAtt CleanupProject.Arn
               - Effect: Allow
                 Action:
                   - cloudformation:CreateStack
@@ -351,6 +430,21 @@ Resources:
               OutputArtifacts:
                 - Name: QaStackOutput
 
+        - Name: CleanupQA
+          Actions:
+            - Name: PruneOldVersions
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CleanupProject
+                EnvironmentVariables: !Sub |
+                  [{"name":"STACK_NAME","value":"${QaStackName}","type":"PLAINTEXT"}]
+              InputArtifacts:
+                - Name: SourceArtifact
+
         - Name: IntegrationTest
           Actions:
             - Name: SmokeTest
@@ -397,6 +491,21 @@ Resources:
                   }
               InputArtifacts:
                 - Name: BuildArtifact
+
+        - Name: CleanupProd
+          Actions:
+            - Name: PruneOldVersions
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref CleanupProject
+                EnvironmentVariables: !Sub |
+                  [{"name":"STACK_NAME","value":"${ProdStackName}","type":"PLAINTEXT"}]
+              InputArtifacts:
+                - Name: SourceArtifact
 
 Outputs:
   PipelineUrl:

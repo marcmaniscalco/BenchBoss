@@ -36,9 +36,11 @@ BenchBoss/
 │   └── create_local_table.py   # One-time script to create the local DynamoDB table
 ├── infrastructure/
 │   ├── template.yaml       # SAM template (Lambda + DynamoDB)
-│   └── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> integration test -> approval -> Prod)
+│   └── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> cleanup -> integration test -> approval -> Prod -> cleanup)
 ├── buildspec.yml               # CodeBuild instructions for the Build stage
 ├── integration-buildspec.yml   # CodeBuild instructions for the IntegrationTest stage
+├── cleanup-buildspec.yml       # CodeBuild instructions for the CleanupQA/CleanupProd stages
+├── cleanup_lambda_versions.py  # Deletes unused Lambda versions so SnapStart stops caching them
 ├── lambda_function.py          # Interactions Lambda entry point (Function URL)
 ├── stream_lambda_handler.py    # Stream Lambda entry point (DynamoDB Streams)
 ├── register_commands.py        # One-time script to register slash commands with Discord
@@ -549,6 +551,12 @@ make deploy
 
 SAM diffs the template and code, ships only what changed. Each deploy publishes a new Lambda version; SnapStart re-snapshots automatically when the version is published, so cold starts stay fast.
 
+> Every published version keeps its own SnapStart cache billed until that
+> version is deleted — old versions aren't cleaned up automatically. Run
+> `pipenv run python cleanup_lambda_versions.py --stack-name bench-boss` (or
+> your `STACK_NAME`) after a run of manual deploys, same as the pipeline's
+> Cleanup stages do automatically — see **7.2c**.
+
 ### 6.5 Cost
 
 At personal-testing volume this is a few cents a month at most — Lambda and
@@ -575,17 +583,22 @@ CloudFormation stack that creates:
 - A CodeBuild project that runs `ruff check`, `ruff format --check`, a
   `detect-secrets` scan, `pytest --cov`, and `sam build`/`sam package` — a
   failure in any check fails the build before it deploys anywhere
-- A CodePipeline with six stages:
+- A CodePipeline with eight stages:
   1. **Source** — pulls from GitHub (`marcmaniscalco/BenchBoss`, `main` branch) via a
      CodeStar Connections GitHub App connection
   2. **Build** — runs lint + unit tests, then packages the Lambdas
   3. **DeployQA** — applies the SAM template as `bench-boss-qa`
-  4. **IntegrationTest** — signs real Discord-shaped interaction payloads with
+  4. **CleanupQA** — deletes every Lambda version except the one the `live`
+     alias points to, so SnapStart stops billing to cache versions nobody
+     uses (see **7.2c** — this is what keeps the pipeline's own churn from
+     silently inflating your bill)
+  5. **IntegrationTest** — signs real Discord-shaped interaction payloads with
      a QA-only test keypair and POSTs them straight to the deployed QA
      Lambda's Function URL, asserting on the responses. A failure here fails
      the pipeline and blocks **ApproveProd** — see **7.2b**
-  5. **ApproveProd** — manual approval gate (you click **Approve** in the console)
-  6. **DeployProd** — applies the same template as `bench-boss-prod`
+  6. **ApproveProd** — manual approval gate (you click **Approve** in the console)
+  7. **DeployProd** — applies the same template as `bench-boss-prod`
+  8. **CleanupProd** — same version pruning as **CleanupQA**, for the prod stack
 - A GitHub webhook (registered automatically by the CodeStar connection) that
   triggers the pipeline on every push to `main`
 - An S3 bucket for build artifacts (30-day lifecycle)
@@ -656,6 +669,32 @@ QA stack's `TestPublicKey` parameter and `TestSigningPrivateKey` is fetched
 at build time by the IntegrationTest stage. Rotate it the same way as the
 other secrets (`update-secret` with a freshly generated pair); nothing else
 needs to change.
+
+### 7.2c Why there's a Cleanup stage
+
+Both Lambdas use `AutoPublishAlias: live` + SnapStart (`infrastructure/template.yaml`).
+Every deploy that changes a function's code publishes a brand-new, immutable
+version, and AWS Lambda bills `Lambda-SnapStart-Cached-GB-S` to keep a
+snapshot cached for **every version that's ever had SnapStart applied — not
+just the current one — for as long as that version exists.** Nothing in SAM
+or CloudFormation prunes old versions on its own, so this grows without
+bound: a week of frequent QA deploys once ran the two `bench-boss-qa`
+functions up to 33 versions each (66 total, on top of a handful in prod),
+which alone was costing roughly **$4.50/day** in pure cache-storage charges
+for versions nothing was invoking anymore.
+
+`cleanup_lambda_versions.py` fixes this: given a stack name, it finds every
+`AWS::Lambda::Function` in that stack, reads what version the `live` alias
+currently points to, and deletes every other version. It's safe to run
+after every deploy — the Function URL and the DynamoDB Streams trigger both
+target the `live` alias, never a specific version — which is exactly what
+the **CleanupQA**/**CleanupProd** pipeline stages do. Run it manually
+against any stack if versions ever pile up outside the pipeline (e.g. after
+a run of `make deploy`):
+
+```powershell
+pipenv run python cleanup_lambda_versions.py --stack-name bench-boss-qa
+```
 
 ### 7.3 Bootstrap the pipeline
 
@@ -738,10 +777,10 @@ Then push any commit to `main` to run the pipeline again.
 ### 7.5 Approve a production release
 
 1. Open the AWS Console → **CodePipeline** → `bench-boss-pipeline`
-2. Wait for **DeployQA** and **IntegrationTest** to go green
+2. Wait for **DeployQA**, **CleanupQA**, and **IntegrationTest** to go green
 3. Test the QA bot in your QA Discord server
 4. Click **Review** on the **ApproveProd** stage → **Approve**
-5. The **DeployProd** stage runs and updates the prod stack
+5. The **DeployProd** and **CleanupProd** stages run and update the prod stack
 
 If **IntegrationTest** fails, the pipeline stops before **ApproveProd** —
 check the CodeBuild logs for that stage (`pytest -v` output, one line per
