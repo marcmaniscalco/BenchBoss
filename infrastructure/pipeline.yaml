@@ -234,10 +234,22 @@ Resources:
                 Action:
                   - lambda:GetAlias
                   - lambda:ListVersionsByFunction
-                  - lambda:DeleteFunction
                 Resource:
                   - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${QaStackName}-*"
                   - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProdStackName}-*"
+              # Trailing :* requires a qualifier (version/alias) in the request's
+              # resource ARN — Lambda authorizes DeleteFunction by comparing the
+              # policy Resource against both FunctionName and Qualifier, so an
+              # unqualified DeleteFunction call (which deletes the whole function,
+              # not one version) resolves to the bare function ARN and is denied
+              # here, even though this role is otherwise trusted with
+              # DeleteFunction on these functions.
+              - Effect: Allow
+                Action:
+                  - lambda:DeleteFunction
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${QaStackName}-*:*"
+                  - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProdStackName}-*:*"
 
   CleanupProject:
     Type: AWS::CodeBuild::Project
