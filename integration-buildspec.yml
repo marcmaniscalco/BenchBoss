@@ -6,8 +6,9 @@ phases:
       python: 3.13
     commands:
       - pip install --upgrade pip pipenv
-      - pipenv install --deploy
+      - pipenv install --dev --deploy
 
   build:
     commands:
-      - pipenv run python tests_integration/qa_smoke_test.py "$CODEBUILD_SRC_DIR_QaStackOutput/output.json"
+      - export QA_STACK_OUTPUT_PATH="$CODEBUILD_SRC_DIR_QaStackOutput/output.json"
+      - pipenv run pytest tests_integration/ -v

@@ -28,7 +28,8 @@ BenchBoss/
 │   ├── test_lambda_function.py
 │   └── test_stream_lambda_handler.py
 ├── tests_integration/
-│   └── qa_smoke_test.py    # Post-deploy smoke test against the live QA Function URL
+│   ├── conftest.py          # Fixtures: QA Function URL + test-signing key
+│   └── test_qa_smoke.py    # Post-deploy smoke test against the live QA Function URL
 ├── local/
 │   ├── docker-compose.yml      # DynamoDB Local + Admin UI
 │   ├── local_server.py         # Flask server for local Discord testing via ngrok
@@ -699,8 +700,9 @@ Then push any commit to `main` to run the pipeline again.
 5. The **DeployProd** stage runs and updates the prod stack
 
 If **IntegrationTest** fails, the pipeline stops before **ApproveProd** —
-check the CodeBuild logs for that stage (each check prints `PASS`/`FAIL`
-with the response it got) before approving anything.
+check the CodeBuild logs for that stage (`pytest -v` output, one line per
+check with a full assertion diff for whichever failed) before approving
+anything.
 
 If you want to abandon a build instead of promoting it, click **Reject** on
 the approval action — the pipeline run ends, and the next push starts a
