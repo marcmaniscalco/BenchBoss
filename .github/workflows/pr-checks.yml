@@ -20,10 +20,10 @@ jobs:
           pipenv install --dev
 
       - name: Lint
-        run: pipenv run ruff check bench_boss/ tests/
+        run: pipenv run ruff check bench_boss/ tests/ tests_integration/
 
       - name: Format check
-        run: pipenv run ruff format --check bench_boss/ tests/
+        run: pipenv run ruff format --check bench_boss/ tests/ tests_integration/
 
       - name: Secrets scan
         run: >-
