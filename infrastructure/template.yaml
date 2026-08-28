@@ -17,6 +17,17 @@ Parameters:
     Type: String
     Description: "Discord bot token (Developer Portal > Bot > Token)"
     NoEcho: true
+  TestPublicKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: >-
+      Optional second Ed25519 public key that signature verification also
+      accepts, alongside DiscordPublicKey. Discord's own private signing key
+      never leaves Discord, so nothing can forge a request for
+      DiscordPublicKey — this is a separate keypair we hold both halves of,
+      used only by the post-deploy integration test stage to sign real
+      requests against a live environment. Leave blank in Prod.
 
 Resources:
 
@@ -52,6 +63,7 @@ Resources:
           DISCORD_PUBLIC_KEY: !Ref DiscordPublicKey
           DISCORD_TOKEN: !Ref DiscordToken
           DYNAMODB_TABLE: !Ref BenchBossTable
+          TEST_PUBLIC_KEY: !Ref TestPublicKey
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED

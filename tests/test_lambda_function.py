@@ -79,6 +79,73 @@ def test_uppercase_headers_are_normalized():
     assert response["statusCode"] == 200
 
 
+def test_test_public_key_signature_is_accepted():
+    """A QA-only test keypair signature is accepted when TEST_PUBLIC_KEY is set."""
+    test_signing_key = SigningKey.generate()
+    test_public_key_hex = bytes(test_signing_key.verify_key).hex()
+    raw = json.dumps({"type": 1}).encode()
+    timestamp = str(int(time.time()))
+    signature = test_signing_key.sign(timestamp.encode() + raw).signature.hex()
+    event = {
+        "headers": {
+            "x-signature-ed25519": signature,
+            "x-signature-timestamp": timestamp,
+        },
+        "body": raw.decode(),
+        "isBase64Encoded": False,
+    }
+
+    with patch.dict(os.environ, {"TEST_PUBLIC_KEY": test_public_key_hex}):
+        response = lambda_function.lambda_handler(event, context=None)
+
+    assert response["statusCode"] == 200
+
+
+def test_test_public_key_unset_rejects_non_discord_signature():
+    """Without TEST_PUBLIC_KEY, a signature from any other key still fails."""
+    other_signing_key = SigningKey.generate()
+    raw = json.dumps({"type": 1}).encode()
+    timestamp = str(int(time.time()))
+    signature = other_signing_key.sign(timestamp.encode() + raw).signature.hex()
+    event = {
+        "headers": {
+            "x-signature-ed25519": signature,
+            "x-signature-timestamp": timestamp,
+        },
+        "body": raw.decode(),
+        "isBase64Encoded": False,
+    }
+
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("TEST_PUBLIC_KEY", None)
+        response = lambda_function.lambda_handler(event, context=None)
+
+    assert response["statusCode"] == 401
+
+
+def test_test_public_key_set_still_rejects_unrelated_signature():
+    """TEST_PUBLIC_KEY being set doesn't accept signatures from a third key."""
+    test_signing_key = SigningKey.generate()
+    test_public_key_hex = bytes(test_signing_key.verify_key).hex()
+    other_signing_key = SigningKey.generate()
+    raw = json.dumps({"type": 1}).encode()
+    timestamp = str(int(time.time()))
+    signature = other_signing_key.sign(timestamp.encode() + raw).signature.hex()
+    event = {
+        "headers": {
+            "x-signature-ed25519": signature,
+            "x-signature-timestamp": timestamp,
+        },
+        "body": raw.decode(),
+        "isBase64Encoded": False,
+    }
+
+    with patch.dict(os.environ, {"TEST_PUBLIC_KEY": test_public_key_hex}):
+        response = lambda_function.lambda_handler(event, context=None)
+
+    assert response["statusCode"] == 401
+
+
 def test_application_command_dispatches_to_bot():
     body = {"type": 2, "data": {"name": "ping"}}
     raw = json.dumps(body).encode()

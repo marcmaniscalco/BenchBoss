@@ -24,13 +24,13 @@ cov:
 # ── Lint & format ─────────────────────────────────────────────────────────────
 
 lint:
-	pipenv run ruff check bench_boss/ tests/
+	pipenv run ruff check bench_boss/ tests/ tests_integration/
 
 lint-fix:
-	pipenv run ruff check --fix bench_boss/ tests/
+	pipenv run ruff check --fix bench_boss/ tests/ tests_integration/
 
 format:
-	pipenv run ruff format bench_boss/ tests/
+	pipenv run ruff format bench_boss/ tests/ tests_integration/
 
 # ── Pre-commit hooks ──────────────────────────────────────────────────────────
 
