@@ -171,8 +171,19 @@ On the **General Information** tab, copy and save:
 ### 2.4 Invite the bot to your server
 
 1. In the sidebar click **OAuth2 → URL Generator**
-2. Under **Scopes** check `applications.commands`
-3. Copy the generated URL, open it in a browser, select your server, click **Authorize**
+2. Under **Scopes** check `applications.commands` **and** `bot`
+3. Under **Bot Permissions** check **Send Messages**, **Embed Links**, and **Manage Messages**
+4. Copy the generated URL, open it in a browser, select your server, click **Authorize**
+
+> The `bot` scope and those channel permissions aren't optional extras —
+> `/schedule`, the Edit/Delete buttons, and the DynamoDB-TTL repost (see
+> `_post_channel_message`, `_update_channel_message`, `_delete_channel_message`
+> in `bench_boss/bot.py`, and `stream_handler.py`) all post, edit, or delete
+> channel messages directly with the bot token, independent of any slash
+> command's own interaction response. Without the bot actually being a
+> guild member with those permissions, every one of those calls 403s and
+> the code falls back to older, weaker behavior (or, for the repost loop,
+> silently fails to post the next event).
 
 ---
 
