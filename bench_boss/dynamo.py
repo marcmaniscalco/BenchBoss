@@ -54,8 +54,19 @@ def save_event(
     webcal_url: str | None = None,
     channel_id: str | None = None,
     created_by: str | None = None,
+    message_id: str | None = None,
 ) -> None:
-    """Persist a new event with empty RSVP lists."""
+    """Persist a new event with empty RSVP lists.
+
+    `message_id` is accepted here (rather than requiring a follow-up
+    `store_message_ref` call) so a caller that already posted the Discord
+    message directly — see `_handle_schedule`'s bot-token post, which exists
+    to avoid a race where the DB row outlives a message that never got
+    created — can write the row already pointing at a real message in one
+    shot. Omit it when the message doesn't exist yet (e.g. a calendar/modal
+    flow that still relies on the interaction response itself to create the
+    message), and `message_id` is captured lazily on the first RSVP click.
+    """
     logger.debug("Saving event %s (%r)", event_key, name)
     item: dict = {
         "event_key": event_key,
@@ -82,6 +93,8 @@ def save_event(
         item["channel_id"] = channel_id
     if created_by is not None:
         item["created_by"] = created_by
+    if message_id is not None:
+        item["message_id"] = message_id
     _table().put_item(Item=item)
 
 

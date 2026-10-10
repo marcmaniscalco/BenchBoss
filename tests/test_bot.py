@@ -22,6 +22,7 @@ from bench_boss.bot import (
     _parse_duration_minutes,
     _parse_event_datetime,
     _parse_event_modal_fields,
+    _post_channel_message,
     _send_dm_events,
     _update_channel_message,
     handle_interaction,
@@ -43,7 +44,7 @@ def make_signed_request(body: dict, signing_key: SigningKey):
     return raw_body, signature, timestamp
 
 
-def make_schedule_body(url: str, guild_id: str = "123") -> dict:
+def make_schedule_body(url: str, guild_id: str = "123", channel_id: str = "") -> dict:
     body = {
         "type": APPLICATION_COMMAND,
         "data": {
@@ -53,6 +54,8 @@ def make_schedule_body(url: str, guild_id: str = "123") -> dict:
     }
     if guild_id:
         body["guild_id"] = guild_id
+    if channel_id:
+        body["channel_id"] = channel_id
     return body
 
 
@@ -343,6 +346,129 @@ class TestScheduleInteraction:
         assert kwargs["name"] == "My Event"
         assert kwargs["location"] == "Room 1"
         assert kwargs["guild_id"] == "g1"
+
+    # -- message-first posting (see _handle_schedule's docstring for the
+    # race condition this exists to close) -----------------------------
+
+    def _ok_post_resp(self, message_id: str = "m123"):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"id": message_id}
+        return resp
+
+    def _failed_post_resp(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Missing Access"
+        return resp
+
+    def test_success_posts_to_channel_before_saving_and_returns_ephemeral_ack(self):
+        event = make_calendar_event("Game Night")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.bot.requests.post", return_value=self._ok_post_resp()
+            ) as mock_post,
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics", channel_id="ch1"),
+                bot_token="tok",
+            )
+
+        url = mock_post.call_args[0][0]
+        assert "channels/ch1/messages" in url
+        assert mock_post.call_args[1]["headers"]["Authorization"] == "Bot tok"
+
+        mock_save.assert_called_once()
+        assert mock_save.call_args[1]["message_id"] == "m123"
+        assert mock_save.call_args[1]["channel_id"] == "ch1"
+
+        assert result["body"]["data"]["flags"] == 64
+        assert "Game Night" in result["body"]["data"]["content"]
+        assert "embeds" not in result["body"]["data"]
+
+    def test_direct_post_failure_falls_back_to_embed_response(self):
+        event = make_calendar_event("Game Night")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.bot.requests.post", return_value=self._failed_post_resp()
+            ),
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics", channel_id="ch1"),
+                bot_token="tok",
+            )
+
+        assert mock_save.call_args[1]["message_id"] is None
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "embeds" in result["body"]["data"]
+
+    def test_missing_bot_token_falls_back_to_embed_response(self):
+        event = make_calendar_event("Game Night")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post") as mock_post,
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics", channel_id="ch1")
+            )
+
+        mock_post.assert_not_called()
+        assert mock_save.call_args[1]["message_id"] is None
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "embeds" in result["body"]["data"]
+
+    def test_save_failure_after_successful_post_rolls_back_message(self):
+        event = make_calendar_event("Game Night")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch("bench_boss.bot.requests.post", return_value=self._ok_post_resp()),
+            patch("bench_boss.bot.save_event", side_effect=Exception("DynamoDB error")),
+            patch("bench_boss.bot.requests.delete") as mock_delete,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics", channel_id="ch1"),
+                bot_token="tok",
+            )
+
+        delete_url = mock_delete.call_args[0][0]
+        assert "channels/ch1/messages/m123" in delete_url
+        assert "Failed to save event" in result["body"]["data"]["content"]
+
+
+class TestPostChannelMessage:
+    def test_success_returns_message_id(self):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"id": "m1"}
+        with patch("bench_boss.bot.requests.post", return_value=resp):
+            result = _post_channel_message("ch1", "tok", {"title": "x"}, [])
+        assert result == "m1"
+
+    def test_non_ok_response_returns_none(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Missing Access"
+        with patch("bench_boss.bot.requests.post", return_value=resp):
+            result = _post_channel_message("ch1", "tok", {"title": "x"}, [])
+        assert result is None
+
+    def test_request_exception_returns_none(self):
+        with patch(
+            "bench_boss.bot.requests.post", side_effect=Exception("network error")
+        ):
+            result = _post_channel_message("ch1", "tok", {"title": "x"}, [])
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

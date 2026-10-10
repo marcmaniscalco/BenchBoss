@@ -125,6 +125,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
                 options.get("url", ""),
                 guild_id=body.get("guild_id"),
                 channel_id=body.get("channel_id", ""),
+                bot_token=bot_token,
             )
 
         if command == "events":
@@ -197,11 +198,77 @@ def _ensure_utc_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+def _post_channel_message(
+    channel_id: str, bot_token: str, embed: dict, components: list[dict]
+) -> str | None:
+    """POST a new message to a channel with the bot token; return its message_id.
+
+    Returns None (and logs) on any failure — missing permissions, Discord
+    outage, network error, etc. — so the caller can fall back rather than
+    raise.
+    """
+    try:
+        resp = requests.post(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages",
+            json={"embeds": [embed], "components": components},
+            headers={
+                "Authorization": f"Bot {bot_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("Error posting channel message to %s: %s", channel_id, e)
+        return None
+    if not resp.ok:
+        logger.warning(
+            "Failed to post channel message to %s: %s %s",
+            channel_id,
+            resp.status_code,
+            resp.text,
+        )
+        return None
+    return resp.json().get("id")
+
+
 def _handle_schedule(
     webcal_url: str,
     guild_id: str | None = None,
     channel_id: str = "",
+    bot_token: str = "",
 ) -> dict:
+    """Handle /schedule: post the next upcoming calendar event with RSVP buttons.
+
+    Message creation and the DB row are deliberately ordered message-first:
+    when bot_token and channel_id are both available, we POST the embed
+    directly to the channel (same bot-token REST call `_update_channel_message`
+    / `_delete_channel_message` already use) and only write the DynamoDB row
+    *after* that succeeds, with the real message_id already on it.
+
+    Why: Discord gives a slash command only ~3 seconds to return its
+    interaction response before it gives up waiting and shows the user
+    "the application did not respond" — but the Lambda invocation keeps
+    running regardless, so the old code (fetch calendar -> save DB row ->
+    return the embed *as* the interaction response) could still finish the
+    DB write after that window closed, while Discord had already discarded
+    the late response. That left a DB row with no message ever created for
+    it, which permanently blocked re-running /schedule for that event
+    (find_event_in_channel matched the orphan row) until someone deleted it
+    by hand in the AWS console. Posting the message first makes that
+    particular failure mode impossible: either the message exists before we
+    ever touch the DB, or the post failed and nothing gets written at all,
+    so a retry is always clean. The interaction response itself then only
+    needs to carry a cheap ephemeral ack — if *that* late-shows-as-failed
+    instead, it's cosmetic (the invoker sees a "did not respond" toast) and
+    not a correctness issue, since the real message and DB row already
+    match.
+
+    Falls back to the old "return the embed as the interaction response"
+    behavior when bot_token or channel_id is unavailable (e.g. local/test
+    invocations), or when the direct post itself fails (e.g. the bot lacks
+    Send Messages in that channel) — no worse than today's behavior, just
+    not improved.
+    """
     if not webcal_url:
         return _message("No calendar URL provided.")
 
@@ -228,24 +295,6 @@ def _handle_schedule(
             return _ephemeral(f"**{ev.summary}** is already posted in this channel.")
 
     event_key = str(uuid.uuid4())
-
-    try:
-        save_event(
-            event_key=event_key,
-            name=ev.summary,
-            start=start_iso,
-            end=_ensure_utc_iso(ev.end) if ev.end else None,
-            location=ev.location,
-            description=ev.description,
-            guild_id=guild_id,
-            webcal_url=webcal_url,
-            channel_id=channel_id or None,
-        )
-        logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
-    except Exception as e:
-        logger.error("Failed to save event: %s", e)
-        return _message(f"Failed to save event: {e}")
-
     embed = build_event_embed(
         name=ev.summary,
         start=ev.start,
@@ -259,11 +308,38 @@ def _handle_schedule(
     )
     components = build_rsvp_components(event_key)
 
-    # Note: we don't store (channel_id, message_id) here because we don't
-    # know the message_id yet — Discord assigns it when it posts the embed
-    # in response to this interaction. On Lambda we can't fire-and-forget a
-    # follow-up fetch (the execution environment freezes when the handler
-    # returns). Instead, message_id is captured lazily on the first RSVP
+    message_id = None
+    if channel_id and bot_token:
+        message_id = _post_channel_message(channel_id, bot_token, embed, components)
+
+    try:
+        save_event(
+            event_key=event_key,
+            name=ev.summary,
+            start=start_iso,
+            end=_ensure_utc_iso(ev.end) if ev.end else None,
+            location=ev.location,
+            description=ev.description,
+            guild_id=guild_id,
+            webcal_url=webcal_url,
+            channel_id=channel_id or None,
+            message_id=message_id,
+        )
+        logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
+    except Exception as e:
+        logger.error("Failed to save event: %s", e)
+        if message_id and bot_token:
+            # Best-effort rollback: don't leave a posted message with no DB
+            # row behind it — its RSVP buttons would permanently 404 on
+            # get_event, and a retry can't detect it (no row = no match in
+            # find_event_in_channel), so it'd just sit there duplicated.
+            _delete_channel_message(channel_id, message_id, bot_token)
+        return _message(f"Failed to save event: {e}")
+
+    if message_id:
+        return _ephemeral(f"Scheduled **{ev.summary}**.")
+
+    # Fallback path: message_id capture happens lazily on the first RSVP
     # button click via store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
