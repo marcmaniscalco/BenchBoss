@@ -15,6 +15,7 @@ from bench_boss.bot import (
     PING,
     PONG,
     UPDATE_MESSAGE,
+    _ChannelPostRejected,
     _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
@@ -357,10 +358,20 @@ class TestScheduleInteraction:
         return resp
 
     def _failed_post_resp(self):
+        """An ambiguous failure — ok=False, but not a definitive rejection."""
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 500
+        resp.text = "Internal Server Error"
+        return resp
+
+    def _rejected_post_resp(self, code: int = 50001):
+        """A definitive rejection — 403 with a recognized Discord error code."""
         resp = MagicMock()
         resp.ok = False
         resp.status_code = 403
         resp.text = "Missing Access"
+        resp.json.return_value = {"code": code, "message": "Missing Access"}
         return resp
 
     def test_success_posts_to_channel_before_saving_and_returns_ephemeral_ack(self):
@@ -412,6 +423,29 @@ class TestScheduleInteraction:
         assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
         assert "embeds" not in result["body"]["data"]
         assert "Failed to post" in result["body"]["data"]["content"]
+
+    def test_definitive_rejection_falls_back_to_embed_response(self):
+        """A 403 with a recognized Discord error code (missing access/
+        permissions) guarantees the message was never created, so this is
+        safe to fall back on — unlike an ambiguous failure."""
+        event = make_calendar_event("Game Night")
+        with (
+            patch("bench_boss.bot.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.bot.requests.post",
+                return_value=self._rejected_post_resp(),
+            ),
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            mock_reader.return_value.get_upcoming.return_value = [event]
+            result = handle_interaction(
+                make_schedule_body("https://example.com/cal.ics", channel_id="ch1"),
+                bot_token="tok",
+            )
+
+        assert mock_save.call_args[1]["message_id"] is None
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "embeds" in result["body"]["data"]
 
     def test_missing_bot_token_falls_back_to_embed_response(self):
         event = make_calendar_event("Game Night")
@@ -484,11 +518,57 @@ class TestPostChannelMessage:
     def test_non_ok_response_returns_none(self):
         resp = MagicMock()
         resp.ok = False
-        resp.status_code = 403
-        resp.text = "Missing Access"
+        resp.status_code = 500
+        resp.text = "Internal Server Error"
         with patch("bench_boss.bot.requests.post", return_value=resp):
             result = _post_channel_message("ch1", "tok", {"title": "x"}, [])
         assert result is None
+
+    def test_403_with_unrecognized_code_returns_none(self):
+        """Not every 403 is a definitive rejection — an unrecognized Discord
+        error code is treated as ambiguous, same as a timeout/5xx."""
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Some other 403"
+        resp.json.return_value = {"code": 20001}
+        with patch("bench_boss.bot.requests.post", return_value=resp):
+            result = _post_channel_message("ch1", "tok", {"title": "x"}, [])
+        assert result is None
+
+    def test_403_with_non_json_body_returns_none(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Missing Access"
+        resp.json.side_effect = ValueError("not JSON")
+        with patch("bench_boss.bot.requests.post", return_value=resp):
+            result = _post_channel_message("ch1", "tok", {"title": "x"}, [])
+        assert result is None
+
+    def test_403_missing_access_raises_rejected(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Missing Access"
+        resp.json.return_value = {"code": 50001, "message": "Missing Access"}
+        with (
+            patch("bench_boss.bot.requests.post", return_value=resp),
+            pytest.raises(_ChannelPostRejected),
+        ):
+            _post_channel_message("ch1", "tok", {"title": "x"}, [])
+
+    def test_403_missing_permissions_raises_rejected(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Missing Permissions"
+        resp.json.return_value = {"code": 50013, "message": "Missing Permissions"}
+        with (
+            patch("bench_boss.bot.requests.post", return_value=resp),
+            pytest.raises(_ChannelPostRejected),
+        ):
+            _post_channel_message("ch1", "tok", {"title": "x"}, [])
 
     def test_request_exception_returns_none(self):
         with patch(
@@ -2264,10 +2344,20 @@ class TestCreateEventModalSubmit:
         return resp
 
     def _failed_post_resp(self):
+        """An ambiguous failure — ok=False, but not a definitive rejection."""
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 500
+        resp.text = "Internal Server Error"
+        return resp
+
+    def _rejected_post_resp(self, code: int = 50001):
+        """A definitive rejection — 403 with a recognized Discord error code."""
         resp = MagicMock()
         resp.ok = False
         resp.status_code = 403
         resp.text = "Missing Access"
+        resp.json.return_value = {"code": code, "message": "Missing Access"}
         return resp
 
     def test_success_posts_to_channel_before_saving_and_returns_ephemeral_ack(self):
@@ -2310,6 +2400,23 @@ class TestCreateEventModalSubmit:
         assert result["body"]["data"]["flags"] == 64
         assert "embeds" not in result["body"]["data"]
         assert "Failed to post" in result["body"]["data"]["content"]
+
+    def test_definitive_rejection_falls_back_to_embed_response(self):
+        with (
+            patch(
+                "bench_boss.bot.requests.post",
+                return_value=self._rejected_post_resp(code=50013),
+            ),
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+
+        assert mock_save.call_args[1]["message_id"] is None
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "embeds" in result["body"]["data"]
 
     def test_missing_bot_token_falls_back_to_embed_response(self):
         with (

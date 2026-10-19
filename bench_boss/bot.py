@@ -198,15 +198,37 @@ def _ensure_utc_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+#: Discord JSON error codes that mean the post was definitively rejected —
+#: the message was never created, as opposed to a timeout/5xx where it may
+#: or may not have been.
+_DISCORD_MISSING_ACCESS = 50001
+_DISCORD_MISSING_PERMISSIONS = 50013
+_DEFINITIVE_REJECTION_CODES = {_DISCORD_MISSING_ACCESS, _DISCORD_MISSING_PERMISSIONS}
+
+
+class _ChannelPostRejected(Exception):
+    """Discord definitively rejected the post (missing access/permissions).
+
+    Unlike a timeout or 5xx, this guarantees the message was never created,
+    so callers can safely fall back to another way of delivering it instead
+    of treating it as an ambiguous failure that must not be retried.
+    """
+
+
 def _post_channel_message(
     channel_id: str, bot_token: str, embed: dict, components: list[dict]
 ) -> str | None:
     """POST a new message to a channel with the bot token; return its message_id.
 
-    Returns None (and logs) on any failure — missing permissions, Discord
-    outage, network error, a malformed response body, or a 2xx with no
-    `id` in it — so the caller can treat the post as not having happened
-    rather than raise or silently return a useless message_id.
+    Returns None (and logs) on an *ambiguous* failure — timeout, network
+    error, 5xx, a malformed response body, or a 2xx with no `id` in it —
+    where Discord may or may not have actually created the message, so the
+    caller must not paper over it with a second post.
+
+    Raises `_ChannelPostRejected` for a *definitive* rejection (403 with
+    Discord error code 50001 "Missing Access" or 50013 "Missing
+    Permissions"), where Discord guarantees no message was created, so the
+    caller can safely fall back to a different way of delivering it.
     """
     try:
         resp = requests.post(
@@ -228,6 +250,13 @@ def _post_channel_message(
             resp.status_code,
             resp.text,
         )
+        if resp.status_code == 403:
+            try:
+                code = resp.json().get("code")
+            except ValueError:
+                code = None
+            if code in _DEFINITIVE_REJECTION_CODES:
+                raise _ChannelPostRejected(code)
         return None
     try:
         message_id = resp.json().get("id")
@@ -262,13 +291,17 @@ def _handle_schedule(
     re-running /schedule for that event (`find_event_in_channel` matched
     the orphan row) until someone deleted it by hand.
 
-    If the direct post is attempted (bot_token/channel_id present) but
-    fails, we return an error and skip the DB write entirely, rather than
-    falling back to the old interaction-response behavior — a failed
-    request doesn't prove Discord never created the message, so that
-    fallback risked silently posting a duplicate. The old behavior is only
-    used when bot_token/channel_id aren't available at all (e.g. local/test
-    invocations), where no direct post is ever attempted.
+    If the direct post is attempted (bot_token/channel_id present) and
+    fails *ambiguously* — timeout, 5xx, malformed response — we return an
+    error and skip the DB write entirely, rather than falling back to the
+    old interaction-response behavior: an ambiguous failure doesn't prove
+    Discord never created the message, so that fallback risked silently
+    posting a duplicate. A *definitive* rejection (403 "Missing Access" /
+    "Missing Permissions" — see `_ChannelPostRejected`) is different:
+    Discord guarantees no message was created, so that case falls back to
+    the old behavior safely, same as when bot_token/channel_id aren't
+    available at all (e.g. local/test invocations) and no direct post is
+    ever attempted.
 
     Known limitations this does not change: `find_event_in_channel`'s
     duplicate check is check-then-act, so two concurrent /schedule calls
@@ -317,12 +350,15 @@ def _handle_schedule(
     components = build_rsvp_components(event_key)
 
     attempted_post = bool(channel_id and bot_token)
-    message_id = (
-        _post_channel_message(channel_id, bot_token, embed, components)
-        if attempted_post
-        else None
-    )
-    if attempted_post and message_id is None:
+    message_id = None
+    definitively_rejected = False
+    if attempted_post:
+        try:
+            message_id = _post_channel_message(channel_id, bot_token, embed, components)
+        except _ChannelPostRejected:
+            definitively_rejected = True
+
+    if attempted_post and message_id is None and not definitively_rejected:
         return _message(
             f"Failed to post **{ev.summary}** to the channel. Please try again."
         )
@@ -360,10 +396,12 @@ def _handle_schedule(
     if message_id:
         return _ephemeral(f"Scheduled **{ev.summary}**.")
 
-    # Fallback path: bot_token/channel_id weren't available, so no direct
-    # post was ever attempted. message_id capture happens lazily on the
-    # first RSVP button click via store_message_ref(...) in the button
-    # handlers.
+    # Fallback path: either no direct post was ever attempted
+    # (bot_token/channel_id unavailable), or Discord definitively rejected
+    # it (missing access/permissions) — in both cases no message exists
+    # yet, so the embed is returned as the interaction response instead.
+    # message_id capture happens lazily on the first RSVP button click via
+    # store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
         "body": {
@@ -948,12 +986,15 @@ def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
     components = build_rsvp_components(event_key)
 
     attempted_post = bool(channel_id and bot_token)
-    message_id = (
-        _post_channel_message(channel_id, bot_token, embed, components)
-        if attempted_post
-        else None
-    )
-    if attempted_post and message_id is None:
+    message_id = None
+    definitively_rejected = False
+    if attempted_post:
+        try:
+            message_id = _post_channel_message(channel_id, bot_token, embed, components)
+        except _ChannelPostRejected:
+            definitively_rejected = True
+
+    if attempted_post and message_id is None and not definitively_rejected:
         return _ephemeral(
             f"Failed to post **{parsed['name']}** to the channel. Please try again."
         )
@@ -988,10 +1029,11 @@ def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
     if message_id:
         return _ephemeral(f"Created **{parsed['name']}**.")
 
-    # Fallback path: bot_token/channel_id weren't available, so no direct
-    # post was ever attempted. message_id capture happens lazily on the
-    # first RSVP button click via store_message_ref(...) in the button
-    # handlers.
+    # Fallback path: either no direct post was ever attempted
+    # (bot_token/channel_id unavailable), or Discord definitively rejected
+    # it (missing access/permissions) — see _handle_schedule's docstring.
+    # message_id capture happens lazily on the first RSVP button click via
+    # store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
         "body": {
