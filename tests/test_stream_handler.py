@@ -314,6 +314,72 @@ class TestNextEventPosted:
         mock_save.assert_not_called()
         mock_del.assert_called_once()
 
+    def test_post_response_missing_id_skips_save(self):
+        """A 2xx with no `id` must not be treated as a successful post — a
+        missing id would otherwise write a DB row with message_id=None,
+        reintroducing the orphan-row bug this ordering exists to close."""
+        ev = make_calendar_event()
+        post_resp = mock_ok_response({})
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event") as mock_save,
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        mock_save.assert_not_called()
+
+    def test_post_response_not_json_skips_save(self):
+        ev = make_calendar_event()
+        post_resp = MagicMock()
+        post_resp.ok = True
+        post_resp.json.side_effect = ValueError("not JSON")
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event") as mock_save,
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        mock_save.assert_not_called()
+
+    def test_rollback_failure_logs_warning(self, caplog):
+        ev = make_calendar_event()
+        post_resp = mock_ok_response({"id": "new_msg_id"})
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.stream_handler.save_event",
+                side_effect=Exception("DynamoDB down"),
+            ),
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_fail_response(),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        assert any(
+            "orphaned" in record.message and "new_msg_id" in record.message
+            for record in caplog.records
+        )
+
 
 # ---------------------------------------------------------------------------
 # TTL expiration — no more events

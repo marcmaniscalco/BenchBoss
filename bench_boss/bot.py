@@ -204,8 +204,9 @@ def _post_channel_message(
     """POST a new message to a channel with the bot token; return its message_id.
 
     Returns None (and logs) on any failure — missing permissions, Discord
-    outage, network error, etc. — so the caller can fall back rather than
-    raise.
+    outage, network error, a malformed response body, or a 2xx with no
+    `id` in it — so the caller can treat the post as not having happened
+    rather than raise or silently return a useless message_id.
     """
     try:
         resp = requests.post(
@@ -228,7 +229,17 @@ def _post_channel_message(
             resp.text,
         )
         return None
-    return resp.json().get("id")
+    try:
+        message_id = resp.json().get("id")
+    except ValueError as e:
+        logger.error(
+            "Channel message posted to %s but response wasn't JSON: %s", channel_id, e
+        )
+        return None
+    if not message_id:
+        logger.error("Channel message posted to %s but response had no id", channel_id)
+        return None
+    return message_id
 
 
 def _handle_schedule(
@@ -239,35 +250,32 @@ def _handle_schedule(
 ) -> dict:
     """Handle /schedule: post the next upcoming calendar event with RSVP buttons.
 
-    Message creation and the DB row are deliberately ordered message-first:
-    when bot_token and channel_id are both available, we POST the embed
-    directly to the channel (same bot-token REST call `_update_channel_message`
-    / `_delete_channel_message` already use) and only write the DynamoDB row
-    *after* that succeeds, with the real message_id already on it.
+    Message creation and the DB row are ordered message-first: when
+    bot_token and channel_id are both available, we POST the embed directly
+    to the channel and only write the DynamoDB row *after* that succeeds,
+    with the real message_id already on it. A row is only ever written once
+    a message is confirmed to exist, which closes the race where the old
+    code (fetch calendar -> save DB row -> return the embed *as* the
+    interaction response) could finish the DB write after Discord's ~3s
+    interaction window closed and discarded the late response — leaving a
+    row with no message ever created for it, which permanently blocked
+    re-running /schedule for that event (`find_event_in_channel` matched
+    the orphan row) until someone deleted it by hand.
 
-    Why: Discord gives a slash command only ~3 seconds to return its
-    interaction response before it gives up waiting and shows the user
-    "the application did not respond" — but the Lambda invocation keeps
-    running regardless, so the old code (fetch calendar -> save DB row ->
-    return the embed *as* the interaction response) could still finish the
-    DB write after that window closed, while Discord had already discarded
-    the late response. That left a DB row with no message ever created for
-    it, which permanently blocked re-running /schedule for that event
-    (find_event_in_channel matched the orphan row) until someone deleted it
-    by hand in the AWS console. Posting the message first makes that
-    particular failure mode impossible: either the message exists before we
-    ever touch the DB, or the post failed and nothing gets written at all,
-    so a retry is always clean. The interaction response itself then only
-    needs to carry a cheap ephemeral ack — if *that* late-shows-as-failed
-    instead, it's cosmetic (the invoker sees a "did not respond" toast) and
-    not a correctness issue, since the real message and DB row already
-    match.
+    If the direct post is attempted (bot_token/channel_id present) but
+    fails, we return an error and skip the DB write entirely, rather than
+    falling back to the old interaction-response behavior — a failed
+    request doesn't prove Discord never created the message, so that
+    fallback risked silently posting a duplicate. The old behavior is only
+    used when bot_token/channel_id aren't available at all (e.g. local/test
+    invocations), where no direct post is ever attempted.
 
-    Falls back to the old "return the embed as the interaction response"
-    behavior when bot_token or channel_id is unavailable (e.g. local/test
-    invocations), or when the direct post itself fails (e.g. the bot lacks
-    Send Messages in that channel) — no worse than today's behavior, just
-    not improved.
+    Known limitations this does not change: `find_event_in_channel`'s
+    duplicate check is check-then-act, so two concurrent /schedule calls
+    can still both post; and the extra synchronous Discord round trip makes
+    missing the 3s interaction window more likely (cosmetic only — the
+    event is still created correctly even if the invoker sees a "did not
+    respond" toast).
     """
     if not webcal_url:
         return _message("No calendar URL provided.")
@@ -308,9 +316,16 @@ def _handle_schedule(
     )
     components = build_rsvp_components(event_key)
 
-    message_id = None
-    if channel_id and bot_token:
-        message_id = _post_channel_message(channel_id, bot_token, embed, components)
+    attempted_post = bool(channel_id and bot_token)
+    message_id = (
+        _post_channel_message(channel_id, bot_token, embed, components)
+        if attempted_post
+        else None
+    )
+    if attempted_post and message_id is None:
+        return _message(
+            f"Failed to post **{ev.summary}** to the channel. Please try again."
+        )
 
     try:
         save_event(
@@ -328,19 +343,27 @@ def _handle_schedule(
         logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
     except Exception as e:
         logger.error("Failed to save event: %s", e)
-        if message_id and bot_token:
+        if message_id:
             # Best-effort rollback: don't leave a posted message with no DB
             # row behind it — its RSVP buttons would permanently 404 on
             # get_event, and a retry can't detect it (no row = no match in
             # find_event_in_channel), so it'd just sit there duplicated.
-            _delete_channel_message(channel_id, message_id, bot_token)
+            if not _delete_channel_message(channel_id, message_id, bot_token):
+                logger.warning(
+                    "Rollback delete failed — message %s in channel %s is now "
+                    "orphaned (no DB row) and needs manual cleanup",
+                    message_id,
+                    channel_id,
+                )
         return _message(f"Failed to save event: {e}")
 
     if message_id:
         return _ephemeral(f"Scheduled **{ev.summary}**.")
 
-    # Fallback path: message_id capture happens lazily on the first RSVP
-    # button click via store_message_ref(...) in the button handlers.
+    # Fallback path: bot_token/channel_id weren't available, so no direct
+    # post was ever attempted. message_id capture happens lazily on the
+    # first RSVP button click via store_message_ref(...) in the button
+    # handlers.
     return {
         "statusCode": 200,
         "body": {
@@ -900,10 +923,8 @@ def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
     """Handle the create-event modal: post the embed with RSVP buttons.
 
     Message creation and the DB row are ordered message-first, same as
-    _handle_schedule and for the same reason — see that function's
-    docstring. Falls back to returning the embed as the interaction
-    response when bot_token/channel_id aren't available or the direct post
-    itself fails.
+    _handle_schedule, for the same reasons and with the same limitations —
+    see that function's docstring.
     """
     fields = _extract_modal_fields(body)
     parsed, error, error_field = _parse_event_modal_fields(fields)
@@ -926,9 +947,16 @@ def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
     )
     components = build_rsvp_components(event_key)
 
-    message_id = None
-    if channel_id and bot_token:
-        message_id = _post_channel_message(channel_id, bot_token, embed, components)
+    attempted_post = bool(channel_id and bot_token)
+    message_id = (
+        _post_channel_message(channel_id, bot_token, embed, components)
+        if attempted_post
+        else None
+    )
+    if attempted_post and message_id is None:
+        return _ephemeral(
+            f"Failed to post **{parsed['name']}** to the channel. Please try again."
+        )
 
     try:
         save_event(
@@ -948,14 +976,22 @@ def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
         logger.error("Failed to save event: %s", e)
         if message_id:
             # Best-effort rollback — see _handle_schedule's rollback comment.
-            _delete_channel_message(channel_id, message_id, bot_token)
+            if not _delete_channel_message(channel_id, message_id, bot_token):
+                logger.warning(
+                    "Rollback delete failed — message %s in channel %s is now "
+                    "orphaned (no DB row) and needs manual cleanup",
+                    message_id,
+                    channel_id,
+                )
         return _ephemeral(f"Failed to create event: {e}")
 
     if message_id:
         return _ephemeral(f"Created **{parsed['name']}**.")
 
-    # Fallback path: message_id capture happens lazily on the first RSVP
-    # button click via store_message_ref(...) in the button handlers.
+    # Fallback path: bot_token/channel_id weren't available, so no direct
+    # post was ever attempted. message_id capture happens lazily on the
+    # first RSVP button click via store_message_ref(...) in the button
+    # handlers.
     return {
         "statusCode": 200,
         "body": {
@@ -1060,8 +1096,13 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         )
 
 
-def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) -> None:
-    """Delete an event embed from the channel using the bot token."""
+def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) -> bool:
+    """Delete an event embed from the channel using the bot token.
+
+    Returns whether the delete succeeded, so a rollback caller can log a
+    clear warning when it didn't — that leaves the message orphaned, with
+    no DB row ever pointing at it again.
+    """
     try:
         resp = requests.delete(
             f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
@@ -1071,13 +1112,6 @@ def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) ->
             },
             timeout=10,
         )
-        if not resp.ok:
-            logger.warning(
-                "Failed to delete channel message %s in channel %s: %s",
-                message_id,
-                channel_id,
-                resp.status_code,
-            )
     except Exception as e:
         logger.error(
             "Error deleting channel message %s in channel %s: %s",
@@ -1085,6 +1119,16 @@ def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) ->
             channel_id,
             e,
         )
+        return False
+    if not resp.ok:
+        logger.warning(
+            "Failed to delete channel message %s in channel %s: %s",
+            message_id,
+            channel_id,
+            resp.status_code,
+        )
+        return False
+    return True
 
 
 def _handle_events(webcal_url: str, body: dict, bot_token: str) -> dict:

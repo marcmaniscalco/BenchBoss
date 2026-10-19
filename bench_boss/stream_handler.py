@@ -144,6 +144,11 @@ def _post_next_event(
     except ValueError as e:
         logger.error("Next event message posted but response wasn't JSON: %s", e)
         return
+    if not new_message_id:
+        logger.error(
+            "Next event message posted to %s but response had no id", channel_id
+        )
+        return
 
     try:
         save_event(
@@ -161,32 +166,43 @@ def _post_next_event(
         logger.info("Posted next event %r (key=%s)", ev.summary, new_event_key)
     except Exception as e:
         logger.error("Failed to save next event %r: %s", ev.summary, e)
-        if new_message_id:
-            # Best-effort rollback — don't leave a posted message with no
-            # DB row behind it; see bot.py's _handle_schedule for why.
-            _delete_discord_message(channel_id, new_message_id, bot_token)
+        # Best-effort rollback — don't leave a posted message with no DB
+        # row behind it; see bot.py's _handle_schedule for why.
+        if not _delete_discord_message(channel_id, new_message_id, bot_token):
+            logger.warning(
+                "Rollback delete failed — message %s in channel %s is now "
+                "orphaned (no DB row) and needs manual cleanup",
+                new_message_id,
+                channel_id,
+            )
 
 
-def _delete_discord_message(channel_id: str, message_id: str, bot_token: str) -> None:
+def _delete_discord_message(channel_id: str, message_id: str, bot_token: str) -> bool:
+    """Delete a Discord message using the bot token; return whether it worked."""
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
     logger.info("Deleting Discord message: DELETE %s", url)
-    resp = requests.delete(
-        url,
-        headers={"Authorization": f"Bot {bot_token}"},
-        timeout=10,
-    )
+    try:
+        resp = requests.delete(
+            url,
+            headers={"Authorization": f"Bot {bot_token}"},
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("Error deleting Discord message %s: %s", message_id, e)
+        return False
     logger.debug(
         "Discord DELETE response: status=%s body=%s", resp.status_code, resp.text
     )
     if resp.ok:
         logger.info("Deleted Discord message %s in channel %s", message_id, channel_id)
-    else:
-        logger.warning(
-            "Failed to delete Discord message %s: %s %s",
-            message_id,
-            resp.status_code,
-            resp.text,
-        )
+        return True
+    logger.warning(
+        "Failed to delete Discord message %s: %s %s",
+        message_id,
+        resp.status_code,
+        resp.text,
+    )
+    return False
 
 
 def _to_iso(dt) -> str:

@@ -182,9 +182,13 @@ On the **General Information** tab, copy and save:
 > `_delete_discord_message` in `stream_handler.py`) all post, edit, or delete
 > channel messages directly with the bot token, independent of any slash
 > command's own interaction response. Without the bot actually being a
-> guild member with those permissions, every one of those calls 403s and
-> the code falls back to older, weaker behavior (or, for the repost loop,
-> silently fails to post the next event).
+> guild member with those permissions, every one of those calls 403s: for
+> `/schedule` and `/create-event` that means an error instead of a posted
+> event, and for the repost loop it means silently failing to post the next
+> event. If your server invited an older version of the bot without the
+> `bot` scope or these permissions, re-run the steps above with a freshly
+> generated URL and re-authorize — Discord updates the existing bot's
+> grant in place, so this doesn't create a duplicate.
 
 ---
 
