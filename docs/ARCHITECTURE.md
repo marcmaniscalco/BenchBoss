@@ -88,7 +88,7 @@ into every restored copy until the next deploy — both handlers register an
 
 | Module | Responsibility |
 |---|---|
-| `bot.py` | Core logic — Ed25519 signature verification, `handle_interaction()` command/button/modal routing, Filltime role marking |
+| `bot.py` | Core logic — Ed25519 signature verification, `handle_interaction()` command/button/modal routing, Fulltime role marking |
 | `calendar.py` | `WebCalReader` — fetches and parses external iCal calendars for `/schedule` and `/events` |
 | `discord_api.py` | Builds embeds and message components (buttons, selects); `build_help_embed` for `/bb-help` |
 | `dynamo.py` | DynamoDB persistence — RSVP state, TTL writes, short-lived modal-retry stash items |
