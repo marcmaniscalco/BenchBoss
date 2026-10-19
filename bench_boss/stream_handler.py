@@ -12,7 +12,7 @@ from bench_boss.discord_api import (
     build_no_events_embed,
     build_rsvp_components,
 )
-from bench_boss.dynamo import save_event, store_message_ref
+from bench_boss.dynamo import save_event
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,16 @@ def _handle_record(record: dict, bot_token: str) -> None:
 def _post_next_event(
     channel_id: str, webcal_url: str, guild_id: str | None, bot_token: str
 ) -> None:
+    """Post the next upcoming event after the current one's TTL expires.
+
+    Message creation and the DB row are ordered message-first, same as
+    bot.py's `_handle_schedule` and for the same reason — see that
+    function's docstring. The DB row is only written once the channel post
+    has actually succeeded and we have a real message_id for it, so a slow
+    or interrupted Lambda invocation can no longer leave a row with no
+    message behind it. If the post succeeds but the DB write then fails,
+    the just-posted message is rolled back.
+    """
     try:
         events = WebCalReader(webcal_url).get_remaining()
     except Exception as e:
@@ -101,21 +111,6 @@ def _post_next_event(
     ev = events[0]
     new_event_key = str(uuid.uuid4())
 
-    try:
-        save_event(
-            event_key=new_event_key,
-            name=ev.summary,
-            start=_to_iso(ev.start),
-            end=_to_iso(ev.end) if ev.end else None,
-            location=ev.location,
-            description=ev.description,
-            guild_id=guild_id,
-            webcal_url=webcal_url,
-        )
-    except Exception as e:
-        logger.error("Failed to save next event %r: %s", ev.summary, e)
-        return
-
     embed = build_event_embed(
         name=ev.summary,
         start=ev.start,
@@ -128,21 +123,48 @@ def _post_next_event(
     )
     components = build_rsvp_components(new_event_key)
 
-    resp = requests.post(
-        f"https://discord.com/api/v10/channels/{channel_id}/messages",
-        json={"embeds": [embed], "components": components},
-        headers=headers,
-        timeout=10,
-    )
-    if resp.ok:
-        new_message_id = resp.json().get("id")
-        if new_message_id:
-            store_message_ref(new_event_key, channel_id, new_message_id)
-        logger.info("Posted next event %r (key=%s)", ev.summary, new_event_key)
-    else:
+    try:
+        resp = requests.post(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages",
+            json={"embeds": [embed], "components": components},
+            headers=headers,
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("Error posting next event message: %s", e)
+        return
+    if not resp.ok:
         logger.warning(
             "Failed to post next event message: %s %s", resp.status_code, resp.text
         )
+        return
+
+    try:
+        new_message_id = resp.json().get("id")
+    except ValueError as e:
+        logger.error("Next event message posted but response wasn't JSON: %s", e)
+        return
+
+    try:
+        save_event(
+            event_key=new_event_key,
+            name=ev.summary,
+            start=_to_iso(ev.start),
+            end=_to_iso(ev.end) if ev.end else None,
+            location=ev.location,
+            description=ev.description,
+            guild_id=guild_id,
+            webcal_url=webcal_url,
+            channel_id=channel_id,
+            message_id=new_message_id,
+        )
+        logger.info("Posted next event %r (key=%s)", ev.summary, new_event_key)
+    except Exception as e:
+        logger.error("Failed to save next event %r: %s", ev.summary, e)
+        if new_message_id:
+            # Best-effort rollback — don't leave a posted message with no
+            # DB row behind it; see bot.py's _handle_schedule for why.
+            _delete_discord_message(channel_id, new_message_id, bot_token)
 
 
 def _delete_discord_message(channel_id: str, message_id: str, bot_token: str) -> None:

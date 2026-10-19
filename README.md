@@ -176,9 +176,10 @@ On the **General Information** tab, copy and save:
 4. Copy the generated URL, open it in a browser, select your server, click **Authorize**
 
 > The `bot` scope and those channel permissions aren't optional extras —
-> `/schedule`, the Edit/Delete buttons, and the DynamoDB-TTL repost (see
-> `_post_channel_message`, `_update_channel_message`, `_delete_channel_message`
-> in `bench_boss/bot.py`, and `stream_handler.py`) all post, edit, or delete
+> `/schedule`, `/create-event`, the Edit/Delete buttons, and the
+> DynamoDB-TTL repost (see `_post_channel_message`, `_update_channel_message`,
+> `_delete_channel_message` in `bench_boss/bot.py`, and `_post_next_event`,
+> `_delete_discord_message` in `stream_handler.py`) all post, edit, or delete
 > channel messages directly with the bot token, independent of any slash
 > command's own interaction response. Without the bot actually being a
 > guild member with those permissions, every one of those calls 403s and

@@ -2083,7 +2083,10 @@ def make_event_modal_submit_body(custom_id: str, **fields) -> dict:
 
 class TestCreateEventModalSubmit:
     def test_valid_submission_calls_save_event(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot._post_channel_message", return_value=None),
+        ):
             handle_interaction(
                 make_event_modal_submit_body("create_event_modal"),
                 bot_token="tok",
@@ -2100,12 +2103,18 @@ class TestCreateEventModalSubmit:
     def test_valid_submission_stores_creator(self):
         body = make_event_modal_submit_body("create_event_modal")
         body["member"] = {"user": {"id": "user42"}}
-        with patch("bench_boss.bot.save_event") as mock_save:
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot._post_channel_message", return_value=None),
+        ):
             handle_interaction(body, bot_token="tok")
         assert mock_save.call_args[1]["created_by"] == "user42"
 
     def test_valid_submission_parses_start_and_end_90_minutes_apart(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot._post_channel_message", return_value=None),
+        ):
             handle_interaction(
                 make_event_modal_submit_body("create_event_modal"),
                 bot_token="tok",
@@ -2116,7 +2125,10 @@ class TestCreateEventModalSubmit:
         assert (end - start) == timedelta(minutes=90)
 
     def test_valid_submission_returns_channel_message_with_embed(self):
-        with patch("bench_boss.bot.save_event"):
+        with (
+            patch("bench_boss.bot.save_event"),
+            patch("bench_boss.bot._post_channel_message", return_value=None),
+        ):
             result = handle_interaction(
                 make_event_modal_submit_body("create_event_modal"),
                 bot_token="tok",
@@ -2205,7 +2217,10 @@ class TestCreateEventModalSubmit:
         assert result["body"]["data"]["flags"] == 64
 
     def test_blank_location_and_description_are_omitted(self):
-        with patch("bench_boss.bot.save_event") as mock_save:
+        with (
+            patch("bench_boss.bot.save_event") as mock_save,
+            patch("bench_boss.bot._post_channel_message", return_value=None),
+        ):
             handle_interaction(
                 make_event_modal_submit_body(
                     "create_event_modal", location="  ", description=""
@@ -2215,6 +2230,91 @@ class TestCreateEventModalSubmit:
         kwargs = mock_save.call_args[1]
         assert kwargs["location"] is None
         assert kwargs["description"] is None
+
+    # -- message-first posting (see _handle_schedule's docstring for the
+    # race condition this exists to close) -----------------------------
+
+    def _ok_post_resp(self, message_id: str = "m123"):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = {"id": message_id}
+        return resp
+
+    def _failed_post_resp(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 403
+        resp.text = "Missing Access"
+        return resp
+
+    def test_success_posts_to_channel_before_saving_and_returns_ephemeral_ack(self):
+        with (
+            patch(
+                "bench_boss.bot.requests.post", return_value=self._ok_post_resp()
+            ) as mock_post,
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+
+        url = mock_post.call_args[0][0]
+        assert "channels/ch1/messages" in url
+        assert mock_post.call_args[1]["headers"]["Authorization"] == "Bot tok"
+
+        mock_save.assert_called_once()
+        assert mock_save.call_args[1]["message_id"] == "m123"
+        assert mock_save.call_args[1]["channel_id"] == "ch1"
+
+        assert result["body"]["data"]["flags"] == 64
+        assert "Scrimmage" in result["body"]["data"]["content"]
+        assert "embeds" not in result["body"]["data"]
+
+    def test_direct_post_failure_falls_back_to_embed_response(self):
+        with (
+            patch(
+                "bench_boss.bot.requests.post", return_value=self._failed_post_resp()
+            ),
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+
+        assert mock_save.call_args[1]["message_id"] is None
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "embeds" in result["body"]["data"]
+
+    def test_missing_bot_token_falls_back_to_embed_response(self):
+        with (
+            patch("bench_boss.bot.requests.post") as mock_post,
+            patch("bench_boss.bot.save_event") as mock_save,
+        ):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal")
+            )
+
+        mock_post.assert_not_called()
+        assert mock_save.call_args[1]["message_id"] is None
+        assert result["body"]["type"] == CHANNEL_MESSAGE_WITH_SOURCE
+        assert "embeds" in result["body"]["data"]
+
+    def test_save_failure_after_successful_post_rolls_back_message(self):
+        with (
+            patch("bench_boss.bot.requests.post", return_value=self._ok_post_resp()),
+            patch("bench_boss.bot.save_event", side_effect=Exception("DynamoDB error")),
+            patch("bench_boss.bot.requests.delete") as mock_delete,
+        ):
+            result = handle_interaction(
+                make_event_modal_submit_body("create_event_modal"),
+                bot_token="tok",
+            )
+
+        delete_url = mock_delete.call_args[0][0]
+        assert "channels/ch1/messages/m123" in delete_url
+        assert "Failed to create event" in result["body"]["data"]["content"]
 
 
 class TestEditEventModalSubmit:

@@ -80,25 +80,36 @@ into every restored copy until the next deploy — both handlers register an
 `_after_restore` hook specifically to re-run logic that must not be frozen
 (currently just resetting `boto3.DEFAULT_SESSION`).
 
-**Why `/schedule` posts the message before writing the DB row:** Discord
-gives a slash command only ~3 seconds to return its interaction response
-before showing the user "the application did not respond" — but the Lambda
-invocation keeps running regardless of whether it made that window. The
-original implementation fetched the calendar, wrote the DynamoDB row, *then*
-returned the embed as the interaction response itself (there was no separate
-"create the Discord message" call — the response *was* the message). If the
-calendar fetch or a cold start pushed past 3 seconds, Discord discarded the
-late response but the DB write had already landed, leaving a row with no
-message ever created for it. `find_event_in_channel`'s duplicate check then
-permanently blocked re-running `/schedule` for that event until the row was
-deleted by hand in the AWS console. The fix in `_handle_schedule`
-(`bench_boss/bot.py`) POSTs the embed straight to the channel with the bot
-token first (the same REST pattern `_update_channel_message` /
-`_delete_channel_message` already use), gets the real `message_id` back
-synchronously, and only writes the DB row afterward — with that
-`message_id` already on it (`save_event`'s `message_id` param). Either the
-message exists before the row does, or the post failed and nothing gets
-written, so a stuck row is no longer possible; a retry is always clean.
+**Why message creation is always ordered message-first, before the DB row:**
+Discord gives a slash command or modal submit only ~3 seconds to return its
+interaction response before showing the user "the application did not
+respond" — but the Lambda invocation keeps running regardless of whether it
+made that window. The original `/schedule` implementation fetched the
+calendar, wrote the DynamoDB row, *then* returned the embed as the
+interaction response itself (there was no separate "create the Discord
+message" call — the response *was* the message). If the calendar fetch or a
+cold start pushed past 3 seconds, Discord discarded the late response but
+the DB write had already landed, leaving a row with no message ever created
+for it. `find_event_in_channel`'s duplicate check then permanently blocked
+re-running `/schedule` for that event until the row was deleted by hand in
+the AWS console. The same shape of bug existed in `/create-event`
+(`_handle_create_event_submit`) and in the stream Lambda's TTL repost
+(`_post_next_event`), since both also wrote the DB row before anything had
+confirmed a message existed for it.
+
+The fix, applied the same way in all three places, POSTs the embed straight
+to the channel with the bot token first (the same REST pattern
+`_update_channel_message` / `_delete_channel_message` already use), gets the
+real `message_id` back synchronously, and only writes the DB row afterward —
+with that `message_id` already on it (`save_event`'s `message_id` param).
+Either the message exists before the row does, or the post failed and
+nothing gets written, so a stuck row is no longer possible; a retry is
+always clean. If the DB write itself then fails after a successful post,
+the just-posted message is rolled back (`_delete_channel_message` /
+`_delete_discord_message`) rather than left behind with no row pointing at
+it. `/schedule` and `/create-event` fall back to the old "return the embed
+as the interaction response" behavior when `bot_token`/`channel_id` aren't
+available or the direct post itself fails.
 
 ---
 

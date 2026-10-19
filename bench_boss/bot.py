@@ -184,7 +184,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
         ):
             return _handle_rsvp_edit_submit(body, bot_token)
         if custom_id == "create_event_modal":
-            return _handle_create_event_submit(body)
+            return _handle_create_event_submit(body, bot_token)
         if custom_id.startswith("edit_event_modal:"):
             return _handle_edit_event_submit(body, bot_token)
         return {"statusCode": 400, "body": {"error": "Unhandled modal submission"}}
@@ -896,30 +896,22 @@ def _reject_event_modal(
     }
 
 
-def _handle_create_event_submit(body: dict) -> dict:
+def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
+    """Handle the create-event modal: post the embed with RSVP buttons.
+
+    Message creation and the DB row are ordered message-first, same as
+    _handle_schedule and for the same reason — see that function's
+    docstring. Falls back to returning the embed as the interaction
+    response when bot_token/channel_id aren't available or the direct post
+    itself fails.
+    """
     fields = _extract_modal_fields(body)
     parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:
         return _reject_event_modal(fields, error, error_field, None)
 
     event_key = str(uuid.uuid4())
-
-    try:
-        save_event(
-            event_key=event_key,
-            name=parsed["name"],
-            start=_ensure_utc_iso(parsed["start"]),
-            end=_ensure_utc_iso(parsed["end"]),
-            location=parsed["location"],
-            description=parsed["description"],
-            guild_id=body.get("guild_id"),
-            channel_id=body.get("channel_id") or None,
-            created_by=_get_user_id(body) or None,
-        )
-        logger.info("Created event %r (key=%s)", parsed["name"], event_key)
-    except Exception as e:
-        logger.error("Failed to save event: %s", e)
-        return _ephemeral(f"Failed to create event: {e}")
+    channel_id = body.get("channel_id", "")
 
     embed = build_event_embed(
         name=parsed["name"],
@@ -934,8 +926,36 @@ def _handle_create_event_submit(body: dict) -> dict:
     )
     components = build_rsvp_components(event_key)
 
-    # message_id is captured lazily on the first button click, same as
-    # calendar-sourced events — see the comment in _handle_schedule.
+    message_id = None
+    if channel_id and bot_token:
+        message_id = _post_channel_message(channel_id, bot_token, embed, components)
+
+    try:
+        save_event(
+            event_key=event_key,
+            name=parsed["name"],
+            start=_ensure_utc_iso(parsed["start"]),
+            end=_ensure_utc_iso(parsed["end"]),
+            location=parsed["location"],
+            description=parsed["description"],
+            guild_id=body.get("guild_id"),
+            channel_id=channel_id or None,
+            created_by=_get_user_id(body) or None,
+            message_id=message_id,
+        )
+        logger.info("Created event %r (key=%s)", parsed["name"], event_key)
+    except Exception as e:
+        logger.error("Failed to save event: %s", e)
+        if message_id:
+            # Best-effort rollback — see _handle_schedule's rollback comment.
+            _delete_channel_message(channel_id, message_id, bot_token)
+        return _ephemeral(f"Failed to create event: {e}")
+
+    if message_id:
+        return _ephemeral(f"Created **{parsed['name']}**.")
+
+    # Fallback path: message_id capture happens lazily on the first RSVP
+    # button click via store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
         "body": {
