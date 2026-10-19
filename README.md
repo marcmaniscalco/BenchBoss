@@ -37,6 +37,8 @@ BenchBoss/
 ├── infrastructure/
 │   ├── template.yaml       # SAM template (Lambda + DynamoDB)
 │   └── pipeline.yaml       # CodePipeline CI/CD stack (main -> QA -> cleanup -> integration test -> approval -> Prod -> cleanup)
+├── docs/
+│   └── ARCHITECTURE.md     # High-level design: runtime architecture, data model, and CI/CD pipeline diagrams
 ├── buildspec.yml               # CodeBuild instructions for the Build stage
 ├── integration-buildspec.yml   # CodeBuild instructions for the IntegrationTest stage
 ├── cleanup-buildspec.yml       # CodeBuild instructions for the CleanupQA/CleanupProd stages
