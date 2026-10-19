@@ -173,8 +173,24 @@ On the **General Information** tab, copy and save:
 ### 2.4 Invite the bot to your server
 
 1. In the sidebar click **OAuth2 → URL Generator**
-2. Under **Scopes** check `applications.commands`
-3. Copy the generated URL, open it in a browser, select your server, click **Authorize**
+2. Under **Scopes** check `applications.commands` **and** `bot`
+3. Under **Bot Permissions** check **Send Messages**, **Embed Links**, and **Manage Messages**
+4. Copy the generated URL, open it in a browser, select your server, click **Authorize**
+
+> The `bot` scope and those channel permissions aren't optional extras —
+> `/schedule`, `/create-event`, the Edit/Delete buttons, and the
+> DynamoDB-TTL repost (see `_post_channel_message`, `_update_channel_message`,
+> `_delete_channel_message` in `bench_boss/bot.py`, and `_post_next_event`,
+> `_delete_discord_message` in `stream_handler.py`) all post, edit, or delete
+> channel messages directly with the bot token, independent of any slash
+> command's own interaction response. Without the bot actually being a
+> guild member with those permissions, every one of those calls 403s: for
+> `/schedule` and `/create-event` that means an error instead of a posted
+> event, and for the repost loop it means silently failing to post the next
+> event. If your server invited an older version of the bot without the
+> `bot` scope or these permissions, re-run the steps above with a freshly
+> generated URL and re-authorize — Discord updates the existing bot's
+> grant in place, so this doesn't create a duplicate.
 
 ---
 

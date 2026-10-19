@@ -125,6 +125,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
                 options.get("url", ""),
                 guild_id=body.get("guild_id"),
                 channel_id=body.get("channel_id", ""),
+                bot_token=bot_token,
             )
 
         if command == "events":
@@ -183,7 +184,7 @@ def handle_interaction(body: dict, bot_token: str = "") -> dict:
         ):
             return _handle_rsvp_edit_submit(body, bot_token)
         if custom_id == "create_event_modal":
-            return _handle_create_event_submit(body)
+            return _handle_create_event_submit(body, bot_token)
         if custom_id.startswith("edit_event_modal:"):
             return _handle_edit_event_submit(body, bot_token)
         return {"statusCode": 400, "body": {"error": "Unhandled modal submission"}}
@@ -197,11 +198,118 @@ def _ensure_utc_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+#: Discord JSON error codes that mean the post was definitively rejected —
+#: the message was never created, as opposed to a timeout/5xx where it may
+#: or may not have been.
+_DISCORD_MISSING_ACCESS = 50001
+_DISCORD_MISSING_PERMISSIONS = 50013
+_DEFINITIVE_REJECTION_CODES = {_DISCORD_MISSING_ACCESS, _DISCORD_MISSING_PERMISSIONS}
+
+
+class _ChannelPostRejected(Exception):
+    """Discord definitively rejected the post (missing access/permissions).
+
+    Unlike a timeout or 5xx, this guarantees the message was never created,
+    so callers can safely fall back to another way of delivering it instead
+    of treating it as an ambiguous failure that must not be retried.
+    """
+
+
+def _post_channel_message(
+    channel_id: str, bot_token: str, embed: dict, components: list[dict]
+) -> str | None:
+    """POST a new message to a channel with the bot token; return its message_id.
+
+    Returns None (and logs) on an *ambiguous* failure — timeout, network
+    error, 5xx, a malformed response body, or a 2xx with no `id` in it —
+    where Discord may or may not have actually created the message, so the
+    caller must not paper over it with a second post.
+
+    Raises `_ChannelPostRejected` for a *definitive* rejection (403 with
+    Discord error code 50001 "Missing Access" or 50013 "Missing
+    Permissions"), where Discord guarantees no message was created, so the
+    caller can safely fall back to a different way of delivering it.
+    """
+    try:
+        resp = requests.post(
+            f"https://discord.com/api/v10/channels/{channel_id}/messages",
+            json={"embeds": [embed], "components": components},
+            headers={
+                "Authorization": f"Bot {bot_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("Error posting channel message to %s: %s", channel_id, e)
+        return None
+    if not resp.ok:
+        logger.warning(
+            "Failed to post channel message to %s: %s %s",
+            channel_id,
+            resp.status_code,
+            resp.text,
+        )
+        if resp.status_code == 403:
+            try:
+                code = resp.json().get("code")
+            except ValueError:
+                code = None
+            if code in _DEFINITIVE_REJECTION_CODES:
+                raise _ChannelPostRejected(code)
+        return None
+    try:
+        message_id = resp.json().get("id")
+    except ValueError as e:
+        logger.error(
+            "Channel message posted to %s but response wasn't JSON: %s", channel_id, e
+        )
+        return None
+    if not message_id:
+        logger.error("Channel message posted to %s but response had no id", channel_id)
+        return None
+    return message_id
+
+
 def _handle_schedule(
     webcal_url: str,
     guild_id: str | None = None,
     channel_id: str = "",
+    bot_token: str = "",
 ) -> dict:
+    """Handle /schedule: post the next upcoming calendar event with RSVP buttons.
+
+    Message creation and the DB row are ordered message-first: when
+    bot_token and channel_id are both available, we POST the embed directly
+    to the channel and only write the DynamoDB row *after* that succeeds,
+    with the real message_id already on it. A row is only ever written once
+    a message is confirmed to exist, which closes the race where the old
+    code (fetch calendar -> save DB row -> return the embed *as* the
+    interaction response) could finish the DB write after Discord's ~3s
+    interaction window closed and discarded the late response — leaving a
+    row with no message ever created for it, which permanently blocked
+    re-running /schedule for that event (`find_event_in_channel` matched
+    the orphan row) until someone deleted it by hand.
+
+    If the direct post is attempted (bot_token/channel_id present) and
+    fails *ambiguously* — timeout, 5xx, malformed response — we return an
+    error and skip the DB write entirely, rather than falling back to the
+    old interaction-response behavior: an ambiguous failure doesn't prove
+    Discord never created the message, so that fallback risked silently
+    posting a duplicate. A *definitive* rejection (403 "Missing Access" /
+    "Missing Permissions" — see `_ChannelPostRejected`) is different:
+    Discord guarantees no message was created, so that case falls back to
+    the old behavior safely, same as when bot_token/channel_id aren't
+    available at all (e.g. local/test invocations) and no direct post is
+    ever attempted.
+
+    Known limitations this does not change: `find_event_in_channel`'s
+    duplicate check is check-then-act, so two concurrent /schedule calls
+    can still both post; and the extra synchronous Discord round trip makes
+    missing the 3s interaction window more likely (cosmetic only — the
+    event is still created correctly even if the invoker sees a "did not
+    respond" toast).
+    """
     if not webcal_url:
         return _message("No calendar URL provided.")
 
@@ -228,24 +336,6 @@ def _handle_schedule(
             return _ephemeral(f"**{ev.summary}** is already posted in this channel.")
 
     event_key = str(uuid.uuid4())
-
-    try:
-        save_event(
-            event_key=event_key,
-            name=ev.summary,
-            start=start_iso,
-            end=_ensure_utc_iso(ev.end) if ev.end else None,
-            location=ev.location,
-            description=ev.description,
-            guild_id=guild_id,
-            webcal_url=webcal_url,
-            channel_id=channel_id or None,
-        )
-        logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
-    except Exception as e:
-        logger.error("Failed to save event: %s", e)
-        return _message(f"Failed to save event: {e}")
-
     embed = build_event_embed(
         name=ev.summary,
         start=ev.start,
@@ -259,12 +349,59 @@ def _handle_schedule(
     )
     components = build_rsvp_components(event_key)
 
-    # Note: we don't store (channel_id, message_id) here because we don't
-    # know the message_id yet — Discord assigns it when it posts the embed
-    # in response to this interaction. On Lambda we can't fire-and-forget a
-    # follow-up fetch (the execution environment freezes when the handler
-    # returns). Instead, message_id is captured lazily on the first RSVP
-    # button click via store_message_ref(...) in the button handlers.
+    attempted_post = bool(channel_id and bot_token)
+    message_id = None
+    definitively_rejected = False
+    if attempted_post:
+        try:
+            message_id = _post_channel_message(channel_id, bot_token, embed, components)
+        except _ChannelPostRejected:
+            definitively_rejected = True
+
+    if attempted_post and message_id is None and not definitively_rejected:
+        return _message(
+            f"Failed to post **{ev.summary}** to the channel. Please try again."
+        )
+
+    try:
+        save_event(
+            event_key=event_key,
+            name=ev.summary,
+            start=start_iso,
+            end=_ensure_utc_iso(ev.end) if ev.end else None,
+            location=ev.location,
+            description=ev.description,
+            guild_id=guild_id,
+            webcal_url=webcal_url,
+            channel_id=channel_id or None,
+            message_id=message_id,
+        )
+        logger.info("Scheduled event %r (key=%s)", ev.summary, event_key)
+    except Exception as e:
+        logger.error("Failed to save event: %s", e)
+        if message_id:
+            # Best-effort rollback: don't leave a posted message with no DB
+            # row behind it — its RSVP buttons would permanently 404 on
+            # get_event, and a retry can't detect it (no row = no match in
+            # find_event_in_channel), so it'd just sit there duplicated.
+            if not _delete_channel_message(channel_id, message_id, bot_token):
+                logger.warning(
+                    "Rollback delete failed — message %s in channel %s is now "
+                    "orphaned (no DB row) and needs manual cleanup",
+                    message_id,
+                    channel_id,
+                )
+        return _message(f"Failed to save event: {e}")
+
+    if message_id:
+        return _ephemeral(f"Scheduled **{ev.summary}**.")
+
+    # Fallback path: either no direct post was ever attempted
+    # (bot_token/channel_id unavailable), or Discord definitively rejected
+    # it (missing access/permissions) — in both cases no message exists
+    # yet, so the embed is returned as the interaction response instead.
+    # message_id capture happens lazily on the first RSVP button click via
+    # store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
         "body": {
@@ -820,30 +957,20 @@ def _reject_event_modal(
     }
 
 
-def _handle_create_event_submit(body: dict) -> dict:
+def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
+    """Handle the create-event modal: post the embed with RSVP buttons.
+
+    Message creation and the DB row are ordered message-first, same as
+    _handle_schedule, for the same reasons and with the same limitations —
+    see that function's docstring.
+    """
     fields = _extract_modal_fields(body)
     parsed, error, error_field = _parse_event_modal_fields(fields)
     if error:
         return _reject_event_modal(fields, error, error_field, None)
 
     event_key = str(uuid.uuid4())
-
-    try:
-        save_event(
-            event_key=event_key,
-            name=parsed["name"],
-            start=_ensure_utc_iso(parsed["start"]),
-            end=_ensure_utc_iso(parsed["end"]),
-            location=parsed["location"],
-            description=parsed["description"],
-            guild_id=body.get("guild_id"),
-            channel_id=body.get("channel_id") or None,
-            created_by=_get_user_id(body) or None,
-        )
-        logger.info("Created event %r (key=%s)", parsed["name"], event_key)
-    except Exception as e:
-        logger.error("Failed to save event: %s", e)
-        return _ephemeral(f"Failed to create event: {e}")
+    channel_id = body.get("channel_id", "")
 
     embed = build_event_embed(
         name=parsed["name"],
@@ -858,8 +985,55 @@ def _handle_create_event_submit(body: dict) -> dict:
     )
     components = build_rsvp_components(event_key)
 
-    # message_id is captured lazily on the first button click, same as
-    # calendar-sourced events — see the comment in _handle_schedule.
+    attempted_post = bool(channel_id and bot_token)
+    message_id = None
+    definitively_rejected = False
+    if attempted_post:
+        try:
+            message_id = _post_channel_message(channel_id, bot_token, embed, components)
+        except _ChannelPostRejected:
+            definitively_rejected = True
+
+    if attempted_post and message_id is None and not definitively_rejected:
+        return _ephemeral(
+            f"Failed to post **{parsed['name']}** to the channel. Please try again."
+        )
+
+    try:
+        save_event(
+            event_key=event_key,
+            name=parsed["name"],
+            start=_ensure_utc_iso(parsed["start"]),
+            end=_ensure_utc_iso(parsed["end"]),
+            location=parsed["location"],
+            description=parsed["description"],
+            guild_id=body.get("guild_id"),
+            channel_id=channel_id or None,
+            created_by=_get_user_id(body) or None,
+            message_id=message_id,
+        )
+        logger.info("Created event %r (key=%s)", parsed["name"], event_key)
+    except Exception as e:
+        logger.error("Failed to save event: %s", e)
+        if message_id:
+            # Best-effort rollback — see _handle_schedule's rollback comment.
+            if not _delete_channel_message(channel_id, message_id, bot_token):
+                logger.warning(
+                    "Rollback delete failed — message %s in channel %s is now "
+                    "orphaned (no DB row) and needs manual cleanup",
+                    message_id,
+                    channel_id,
+                )
+        return _ephemeral(f"Failed to create event: {e}")
+
+    if message_id:
+        return _ephemeral(f"Created **{parsed['name']}**.")
+
+    # Fallback path: either no direct post was ever attempted
+    # (bot_token/channel_id unavailable), or Discord definitively rejected
+    # it (missing access/permissions) — see _handle_schedule's docstring.
+    # message_id capture happens lazily on the first RSVP button click via
+    # store_message_ref(...) in the button handlers.
     return {
         "statusCode": 200,
         "body": {
@@ -964,8 +1138,13 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         )
 
 
-def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) -> None:
-    """Delete an event embed from the channel using the bot token."""
+def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) -> bool:
+    """Delete an event embed from the channel using the bot token.
+
+    Returns whether the delete succeeded, so a rollback caller can log a
+    clear warning when it didn't — that leaves the message orphaned, with
+    no DB row ever pointing at it again.
+    """
     try:
         resp = requests.delete(
             f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}",
@@ -975,13 +1154,6 @@ def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) ->
             },
             timeout=10,
         )
-        if not resp.ok:
-            logger.warning(
-                "Failed to delete channel message %s in channel %s: %s",
-                message_id,
-                channel_id,
-                resp.status_code,
-            )
     except Exception as e:
         logger.error(
             "Error deleting channel message %s in channel %s: %s",
@@ -989,6 +1161,16 @@ def _delete_channel_message(channel_id: str, message_id: str, bot_token: str) ->
             channel_id,
             e,
         )
+        return False
+    if not resp.ok:
+        logger.warning(
+            "Failed to delete channel message %s in channel %s: %s",
+            message_id,
+            channel_id,
+            resp.status_code,
+        )
+        return False
+    return True
 
 
 def _handle_events(webcal_url: str, body: dict, bot_token: str) -> dict:
