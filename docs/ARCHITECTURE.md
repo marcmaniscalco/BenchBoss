@@ -93,7 +93,7 @@ into every restored copy until the next deploy — both handlers register an
 | `discord_api.py` | Builds embeds and message components (buttons, selects); `build_help_embed` for `/bb-help` |
 | `dynamo.py` | DynamoDB persistence — RSVP state, TTL writes, short-lived modal-retry stash items |
 | `stream_handler.py` | Processes DynamoDB Stream `REMOVE` records — repost vs. silent delete |
-| `constants.py` | Shared constants — `TEAM_TIMEZONE`, Filltime role ID |
+| `constants.py` | Shared constants — `TEAM_TIMEZONE`, Fulltime role ID |
 
 ### Entry points & tooling — repo root
 
