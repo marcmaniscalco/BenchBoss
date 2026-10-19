@@ -148,6 +148,9 @@ class TestIgnoredRecords:
 
 
 class TestNextEventPosted:
+    """Message creation and the DB row are ordered message-first here, same
+    as bot.py's _handle_schedule — see _post_next_event's docstring."""
+
     def test_posts_new_embed_then_deletes_old_message(self):
         ev = make_calendar_event("Playoffs")
         post_resp = mock_ok_response({"id": "new_msg_id"})
@@ -156,7 +159,6 @@ class TestNextEventPosted:
         with (
             patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
             patch("bench_boss.stream_handler.save_event"),
-            patch("bench_boss.stream_handler.store_message_ref"),
             patch(
                 "bench_boss.stream_handler.requests.post", return_value=post_resp
             ) as mock_post,
@@ -181,7 +183,6 @@ class TestNextEventPosted:
         with (
             patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
             patch("bench_boss.stream_handler.save_event"),
-            patch("bench_boss.stream_handler.store_message_ref"),
             patch(
                 "bench_boss.stream_handler.requests.post", return_value=post_resp
             ) as mock_post,
@@ -195,14 +196,13 @@ class TestNextEventPosted:
 
         assert "ch1" in mock_post.call_args[0][0]
 
-    def test_saves_new_event_to_dynamo_with_webcal_url(self):
+    def test_saves_new_event_to_dynamo_with_webcal_url_and_message_id(self):
         ev = make_calendar_event()
         post_resp = mock_ok_response({"id": "new_msg_id"})
 
         with (
             patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
             patch("bench_boss.stream_handler.save_event") as mock_save,
-            patch("bench_boss.stream_handler.store_message_ref"),
             patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
             patch(
                 "bench_boss.stream_handler.requests.delete",
@@ -217,16 +217,27 @@ class TestNextEventPosted:
         assert kwargs["webcal_url"] == "https://example.com/cal.ics"
         assert kwargs["guild_id"] == "guild1"
         assert kwargs["name"] == "Game Night"
+        assert kwargs["channel_id"] == "ch1"
+        assert kwargs["message_id"] == "new_msg_id"
 
-    def test_stores_new_message_ref_after_post(self):
+    def test_posts_to_channel_before_saving(self):
+        """The DB row must carry the real message_id from the post response —
+        it is never written ahead of the message the way the old
+        save-then-post ordering did."""
         ev = make_calendar_event()
         post_resp = mock_ok_response({"id": "new_msg_999"})
+        call_order = []
 
         with (
             patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
-            patch("bench_boss.stream_handler.save_event"),
-            patch("bench_boss.stream_handler.store_message_ref") as mock_store,
-            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.save_event",
+                side_effect=lambda **_: call_order.append("save"),
+            ),
+            patch(
+                "bench_boss.stream_handler.requests.post",
+                side_effect=lambda *a, **k: (call_order.append("post"), post_resp)[1],
+            ),
             patch(
                 "bench_boss.stream_handler.requests.delete",
                 return_value=mock_ok_response(),
@@ -235,13 +246,11 @@ class TestNextEventPosted:
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
-        mock_store.assert_called_once()
-        args = mock_store.call_args[0]
-        assert args[1] == "ch1"
-        assert args[2] == "new_msg_999"
+        assert call_order == ["post", "save"]
 
-    def test_dynamo_save_failure_skips_post_but_still_deletes(self):
+    def test_dynamo_save_failure_rolls_back_posted_message(self):
         ev = make_calendar_event()
+        post_resp = mock_ok_response({"id": "new_msg_id"})
 
         with (
             patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
@@ -249,7 +258,7 @@ class TestNextEventPosted:
                 "bench_boss.stream_handler.save_event",
                 side_effect=Exception("DynamoDB down"),
             ),
-            patch("bench_boss.stream_handler.requests.post") as mock_post,
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
             patch(
                 "bench_boss.stream_handler.requests.delete",
                 return_value=mock_ok_response(),
@@ -258,16 +267,17 @@ class TestNextEventPosted:
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
-        mock_post.assert_not_called()
-        mock_del.assert_called_once()
+        # Deletes both the rolled-back new message and the TTL'd old one.
+        assert mock_del.call_count == 2
+        rollback_url = mock_del.call_args_list[0][0][0]
+        assert "channels/ch1/messages/new_msg_id" in rollback_url
 
-    def test_discord_post_failure_still_deletes_old_message(self):
+    def test_discord_post_failure_skips_save_but_still_deletes_old_message(self):
         ev = make_calendar_event()
 
         with (
             patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
-            patch("bench_boss.stream_handler.save_event"),
-            patch("bench_boss.stream_handler.store_message_ref"),
+            patch("bench_boss.stream_handler.save_event") as mock_save,
             patch(
                 "bench_boss.stream_handler.requests.post",
                 return_value=mock_fail_response(),
@@ -280,7 +290,95 @@ class TestNextEventPosted:
             mock_reader.return_value.get_remaining.return_value = [ev]
             handle_stream_records([make_remove_record()], bot_token="tok")
 
+        mock_save.assert_not_called()
         mock_del.assert_called_once()
+
+    def test_post_request_exception_skips_save_but_still_deletes_old_message(self):
+        ev = make_calendar_event()
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event") as mock_save,
+            patch(
+                "bench_boss.stream_handler.requests.post",
+                side_effect=Exception("connection reset"),
+            ),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ) as mock_del,
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        mock_save.assert_not_called()
+        mock_del.assert_called_once()
+
+    def test_post_response_missing_id_skips_save(self):
+        """A 2xx with no `id` must not be treated as a successful post — a
+        missing id would otherwise write a DB row with message_id=None,
+        reintroducing the orphan-row bug this ordering exists to close."""
+        ev = make_calendar_event()
+        post_resp = mock_ok_response({})
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event") as mock_save,
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        mock_save.assert_not_called()
+
+    def test_post_response_not_json_skips_save(self):
+        ev = make_calendar_event()
+        post_resp = MagicMock()
+        post_resp.ok = True
+        post_resp.json.side_effect = ValueError("not JSON")
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch("bench_boss.stream_handler.save_event") as mock_save,
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_ok_response(),
+            ),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        mock_save.assert_not_called()
+
+    def test_rollback_failure_logs_warning(self, caplog):
+        ev = make_calendar_event()
+        post_resp = mock_ok_response({"id": "new_msg_id"})
+
+        with (
+            patch("bench_boss.stream_handler.WebCalReader") as mock_reader,
+            patch(
+                "bench_boss.stream_handler.save_event",
+                side_effect=Exception("DynamoDB down"),
+            ),
+            patch("bench_boss.stream_handler.requests.post", return_value=post_resp),
+            patch(
+                "bench_boss.stream_handler.requests.delete",
+                return_value=mock_fail_response(),
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            mock_reader.return_value.get_remaining.return_value = [ev]
+            handle_stream_records([make_remove_record()], bot_token="tok")
+
+        assert any(
+            "orphaned" in record.message and "new_msg_id" in record.message
+            for record in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------
