@@ -1,4 +1,4 @@
-# BenchBoss Infrastructure
+# BenchBoss Architecture
 
 High-level design: a serverless Discord bot on AWS. Two SnapStart Lambdas,
 one DynamoDB table, and an eight-stage CodePipeline that promotes every
@@ -10,10 +10,6 @@ commit on `main` through QA before a human approves Prod.
 | **Account model** | single AWS account, stack-isolated (QA and Prod are separate CloudFormation stacks) |
 | **Repo** | marcmaniscalco/BenchBoss |
 | **Source of truth** | `infrastructure/template.yaml`, `infrastructure/pipeline.yaml` |
-
-For the same content with rendered diagrams and a styled layout, see the
-published doc (link kept up to date by whoever last regenerated it — ask in
-the repo if you need it).
 
 ---
 
@@ -136,10 +132,10 @@ available or the direct post itself fails.
 | `cleanup_lambda_versions.py` | CodeBuild (Cleanup stages) + manual | Deletes every Lambda version except the one `live` points to |
 | `check_secrets_baseline.py` | CodeBuild (Build stage) + GitHub Actions | Re-runs the `detect-secrets` baseline check without git — CodeBuild's source is a zip snapshot with no `.git` dir |
 
-> **Open TODO:** these three tooling scripts currently sit alongside the two
-> real handlers at the repo root, which makes it hard to tell "Lambda
-> handler" from "build-time tool" at a glance. Tracked in `TODO.md` to move
-> into a `scripts/` directory — not yet done.
+> **Open TODO:** these three tooling scripts sit alongside the two real
+> handlers at the repo root, making it hard to tell "Lambda handler" from
+> "build-time tool" at a glance. See the "Move top-level ops scripts..."
+> item under Chores in `TODO.md` for the planned fix.
 
 ---
 
@@ -173,7 +169,7 @@ erDiagram
         number ttl "epoch seconds - drives Stream REMOVE"
     }
     DRAFT_ITEM {
-        string event_key PK "draft-prefixed uuid4"
+        string event_key PK "'draft:' + uuid4"
         map fields "stashed modal input values"
         string error_field "which field failed validation"
         string error_message
@@ -323,31 +319,21 @@ read the real Discord bot token.
 
 ## Known Issues
 
-Documented in `TODO.md` — real, unresolved, and worth knowing before
-touching the pipeline.
-
 > **Discord tokens are visible in plaintext via pipeline execution history**
->
-> **Where:** `pipeline.yaml` — the DeployQA and DeployProd actions resolve
-> `{{resolve:secretsmanager:...}}` directly inside `ParameterOverrides`.
->
-> **Impact:** anyone with CodePipeline read access can see the resolved
-> `DiscordToken` / `DiscordPublicKey` in plaintext via `ListActionExecutions`
-> or `GetPipelineExecution` — CloudFormation resolves the reference, but the
-> pipeline's own execution history still records the substituted value.
->
-> **Planned fix:** stop passing the secret through `ParameterOverrides`
-> entirely; fetch it from Secrets Manager at runtime inside the Lambda's
-> `_after_restore` hook instead of a module-level env var read (module scope
-> would freeze a rotated secret into every SnapStart-restored copy until the
-> next deploy). Full design is written out in `TODO.md`. **Not started.**
+> — `pipeline.yaml`'s DeployQA/DeployProd actions resolve
+> `{{resolve:secretsmanager:...}}` directly inside `ParameterOverrides`, so
+> anyone with CodePipeline read access can see the resolved `DiscordToken`
+> / `DiscordPublicKey` via `ListActionExecutions`/`GetPipelineExecution`.
+> See the "Stop exposing Discord tokens..." item under Infrastructure in
+> `TODO.md` for the full impact writeup and planned fix. **Not started.**
 
 ---
 
 ## Cost
 
 Pay-per-request compute and storage keep this cheap — with one specific
-gotcha.
+gotcha. Dollar figures below are point-in-time estimates, not a live
+quote — check Cost Explorer for current numbers.
 
 **Application stack (per environment):** a few cents a month at low
 traffic — Lambda and DynamoDB are both pay-per-request with generous free
@@ -362,13 +348,14 @@ GitHub CodeConnections webhook itself is free.
 > `AutoPublishAlias: live` + SnapStart. AWS bills `Lambda-SnapStart-Cached-GB-S`
 > to keep a snapshot cached for **every version that's ever had SnapStart
 > applied** — not just the current one — for as long as that version
-> exists. Nothing in SAM prunes old versions automatically. A week of
-> frequent QA deploys once ran both `bench-boss-qa` functions up to 33
-> versions each (66 total), costing roughly **$4.50/day** in pure
-> cache-storage charges for versions nothing was invoking. **CleanupQA** and
-> **CleanupProd** exist specifically to keep this from recurring — they run
-> `cleanup_lambda_versions.py` after every deploy, deleting everything
-> except the version the `live` alias currently points to.
+> exists. Nothing in SAM prunes old versions automatically. Before the
+> Cleanup stages existed, a week of frequent QA deploys once ran both
+> `bench-boss-qa` functions up to 33 versions each (66 total), costing
+> roughly $4.50/day in pure cache-storage charges for versions nothing was
+> invoking. **CleanupQA** and **CleanupProd** exist specifically to keep
+> this from recurring — they run `cleanup_lambda_versions.py` after every
+> deploy, deleting everything except the version the `live` alias
+> currently points to.
 
 ---
 
