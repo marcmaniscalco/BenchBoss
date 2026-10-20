@@ -323,7 +323,9 @@ def update_rsvp(
     route a fresh RSVP elsewhere (e.g. a non-Fulltime accept to "subs")
     while still toggling off a user an admin placed in `action` directly,
     since that check is keyed off the user's actual current list rather
-    than the caller's intent.
+    than the caller's intent. A user already in `fallback_action` also
+    toggles off on a repeat call, rather than being cleared and
+    immediately re-added to it.
     Returns the updated event item.
     """
     event = get_event(event_key)
@@ -331,10 +333,12 @@ def update_rsvp(
         logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
-    already_in_action = user_id in event.get(action, [])
-    target_action = (
-        action if already_in_action or fallback_action is None else fallback_action
+    in_action = user_id in event.get(action, [])
+    in_fallback = fallback_action is not None and user_id in event.get(
+        fallback_action, []
     )
+    already_in_action = in_action or in_fallback
+    target_action = action if in_action or fallback_action is None else fallback_action
     _clear_user_from_rsvps(event, user_id)
     names = dict(event.get("member_names") or {})
     if not already_in_action:

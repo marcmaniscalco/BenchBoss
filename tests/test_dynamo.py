@@ -646,6 +646,15 @@ class TestUpdateRsvp:
         result = update_rsvp("key1", "user1", "accepted", fallback_action=None)
         assert "user1" in result["accepted"]
 
+    def test_already_in_fallback_action_toggles_off(self, mock_table):
+        """A user already in "subs" (the fallback) who clicks the same
+        button again must be toggled off entirely, not cleared and
+        immediately re-added to "subs"."""
+        mock_table.get_item.return_value = {"Item": _make_event(subs=["user1"])}
+        result = update_rsvp("key1", "user1", "accepted", fallback_action="subs")
+        assert "user1" not in result["subs"]
+        assert "user1" not in result["accepted"]
+
 
 # ---------------------------------------------------------------------------
 # set_goalie
