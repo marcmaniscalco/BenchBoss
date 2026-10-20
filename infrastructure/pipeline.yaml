@@ -455,6 +455,14 @@ Resources:
                 Version: "1"
               Configuration:
                 ProjectName: !Ref IntegrationTestProject
+                # Required whenever a CodeBuild action has more than one
+                # input artifact — CodePipeline has no other way to know
+                # which one is primary ($CODEBUILD_SRC_DIR). Without it the
+                # action fails with "No primary source specified in job
+                # configuration" before a build even starts. The other
+                # input (QaStackOutput) needs no project-side declaration;
+                # it's just exposed as $CODEBUILD_SRC_DIR_QaStackOutput.
+                PrimarySource: SourceArtifact
               InputArtifacts:
                 - Name: SourceArtifact
                 - Name: QaStackOutput
