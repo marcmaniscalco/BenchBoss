@@ -625,6 +625,27 @@ class TestUpdateRsvp:
         assert result["goalie"] == []
         assert "user1" in result["accepted"]
 
+    def test_fallback_action_used_when_not_already_in_action(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = update_rsvp("key1", "user1", "accepted", fallback_action="subs")
+        assert "user1" in result["subs"]
+        assert "user1" not in result["accepted"]
+
+    def test_fallback_action_ignored_when_already_in_action(self, mock_table):
+        """A user already in "accepted" (e.g. placed there directly by an
+        admin via set_rsvp) must still toggle off with the same button,
+        not get redirected to fallback_action — the check is keyed off
+        their actual current list, not just the requested action."""
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        result = update_rsvp("key1", "user1", "accepted", fallback_action="subs")
+        assert "user1" not in result["accepted"]
+        assert "user1" not in result["subs"]
+
+    def test_fallback_action_not_used_when_none(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = update_rsvp("key1", "user1", "accepted", fallback_action=None)
+        assert "user1" in result["accepted"]
+
 
 # ---------------------------------------------------------------------------
 # set_goalie

@@ -439,16 +439,26 @@ def _handle_rsvp(body: dict) -> dict:
         display_name = display_name + "*"
 
     # Only Fulltime players land in "accepted" — anyone else clicking the
-    # same accept button is routed to "subs" instead. Toggling must check
-    # against this same effective action, or a non-Fulltime member's
-    # second click would check the (empty, for them) "accepted" list and
-    # re-add them to "subs" instead of removing them from it.
-    effective_action = "subs" if action == "accepted" and not is_fulltime else action
+    # same accept button is routed to "subs" instead. The redirect only
+    # applies to a fresh accept: update_rsvp keys the toggle-off check off
+    # the user's actual current list, so a non-Fulltime member an admin
+    # placed in "accepted" still toggles off with this same button instead
+    # of being moved to "subs". `member` must be present too, or a DM
+    # interaction (no guild roles to check) would redirect everyone.
+    fallback_action = (
+        "subs" if action == "accepted" and member and not is_fulltime else None
+    )
 
     try:
-        event = update_rsvp(event_key, user_id, effective_action, display_name)
+        event = update_rsvp(
+            event_key, user_id, action, display_name, fallback_action=fallback_action
+        )
+        applied_action = next(
+            (a for a in RSVP_ACTIONS if user_id in event.get(a, [])),
+            f"{action} (removed)",
+        )
         logger.info(
-            "RSVP %s for event %s by user %s", effective_action, event_key, user_id
+            "RSVP %s for event %s by user %s", applied_action, event_key, user_id
         )
     except ValueError:
         logger.warning("RSVP failed — event not found: %s", event_key)

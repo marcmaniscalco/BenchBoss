@@ -648,7 +648,9 @@ class TestRsvpInteraction:
         with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
             handle_interaction(make_rsvp_body("rsvp:tentative:abc-key", "user99"))
 
-        mock_update.assert_called_once_with("abc-key", "user99", "tentative", None)
+        mock_update.assert_called_once_with(
+            "abc-key", "user99", "tentative", None, fallback_action=None
+        )
 
     def test_event_not_found_returns_error_message(self):
         with patch("bench_boss.bot.update_rsvp", side_effect=ValueError("not found")):
@@ -682,7 +684,9 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "guild-user", "accepted", None)
+        mock_update.assert_called_once_with(
+            "key1", "guild-user", "accepted", None, fallback_action=None
+        )
 
     def test_user_id_from_user_when_in_dm(self):
         updated = make_stored_event()
@@ -694,7 +698,9 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:declined:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "dm-user", "declined", None)
+        mock_update.assert_called_once_with(
+            "key1", "dm-user", "declined", None, fallback_action=None
+        )
 
     def test_server_nick_used_as_display_name(self):
         updated = make_stored_event()
@@ -710,7 +716,9 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "accepted", "Server Nick")
+        mock_update.assert_called_once_with(
+            "key1", "user1", "accepted", "Server Nick", fallback_action=None
+        )
 
     def test_global_name_used_when_no_server_nick(self):
         updated = make_stored_event()
@@ -725,7 +733,9 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "accepted", "Alice")
+        mock_update.assert_called_once_with(
+            "key1", "user1", "accepted", "Alice", fallback_action=None
+        )
 
     def test_username_used_when_no_global_name(self):
         updated = make_stored_event()
@@ -740,7 +750,9 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "accepted", "alice123")
+        mock_update.assert_called_once_with(
+            "key1", "user1", "accepted", "alice123", fallback_action=None
+        )
 
     def test_name_suffixed_with_star_when_no_fulltime_role(self):
         updated = make_stored_event()
@@ -756,8 +768,11 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        # Non-Fulltime accept is routed to "subs" — see TestSubsRouting.
-        mock_update.assert_called_once_with("key1", "user2", "subs", "Jane*")
+        # Non-Fulltime accept is routed to "subs" via fallback_action — see
+        # TestSubsRouting.
+        mock_update.assert_called_once_with(
+            "key1", "user2", "accepted", "Jane*", fallback_action="subs"
+        )
 
     def test_name_not_suffixed_when_fulltime_role_present(self):
         updated = make_stored_event()
@@ -773,7 +788,9 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user2", "accepted", "Jane")
+        mock_update.assert_called_once_with(
+            "key1", "user2", "accepted", "Jane", fallback_action=None
+        )
 
     def test_no_star_when_display_name_is_none(self):
         """Users with no resolvable name should not get a bare '*' stored."""
@@ -786,8 +803,11 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        # Non-Fulltime accept is routed to "subs" — see TestSubsRouting.
-        mock_update.assert_called_once_with("key1", "user3", "subs", None)
+        # Non-Fulltime accept is routed to "subs" via fallback_action — see
+        # TestSubsRouting.
+        mock_update.assert_called_once_with(
+            "key1", "user3", "accepted", None, fallback_action="subs"
+        )
 
     def test_embed_shows_display_name_when_member_names_present(self):
         updated = make_stored_event(accepted=["user1"], member_names={"user1": "Alice"})
@@ -819,7 +839,9 @@ class TestSubsRouting:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "accepted", None)
+        mock_update.assert_called_once_with(
+            "key1", "user1", "accepted", None, fallback_action=None
+        )
 
     def test_non_fulltime_accept_routes_to_subs(self):
         updated = make_stored_event()
@@ -831,7 +853,9 @@ class TestSubsRouting:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "subs", None)
+        mock_update.assert_called_once_with(
+            "key1", "user1", "accepted", None, fallback_action="subs"
+        )
 
     def test_non_fulltime_decline_not_redirected(self):
         updated = make_stored_event()
@@ -843,7 +867,9 @@ class TestSubsRouting:
                     "data": {"custom_id": "rsvp:declined:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "declined", None)
+        mock_update.assert_called_once_with(
+            "key1", "user1", "declined", None, fallback_action=None
+        )
 
     def test_non_fulltime_tentative_not_redirected(self):
         updated = make_stored_event()
@@ -855,7 +881,25 @@ class TestSubsRouting:
                     "data": {"custom_id": "rsvp:tentative:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user1", "tentative", None)
+        mock_update.assert_called_once_with(
+            "key1", "user1", "tentative", None, fallback_action=None
+        )
+
+    def test_no_redirect_when_member_absent(self):
+        """A DM interaction has no `member` (so no guild roles to check);
+        the accept must not be redirected to "subs" in that case."""
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "user": {"id": "user1"},
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with(
+            "key1", "user1", "accepted", None, fallback_action=None
+        )
 
     def test_embed_shows_subs_after_non_fulltime_accept(self):
         updated = make_stored_event(subs=["user1"], member_names={"user1": "Jane*"})
