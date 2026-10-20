@@ -58,6 +58,7 @@ class TestSaveEvent:
         assert item["accepted"] == []
         assert item["declined"] == []
         assert item["tentative"] == []
+        assert item["subs"] == []
         assert item["goalie"] == []
 
     def test_omits_none_optional_fields(self, mock_table):
@@ -476,6 +477,19 @@ class TestSetRsvp:
         assert result["goalie"] == []
         assert "user1" in result["accepted"]
 
+    def test_can_set_subs_directly(self, mock_table):
+        """An admin can place anyone in "subs" via set_rsvp — no role check
+        happens here; that's the caller's (bot.py) job."""
+        mock_table.get_item.return_value = {"Item": _make_event()}
+        result = set_rsvp("key1", "user1", "subs")
+        assert "user1" in result["subs"]
+
+    def test_set_subs_moves_user_out_of_accepted(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
+        result = set_rsvp("key1", "user1", "subs")
+        assert "user1" not in result["accepted"]
+        assert "user1" in result["subs"]
+
 
 # ---------------------------------------------------------------------------
 # remove_rsvp
@@ -491,8 +505,13 @@ class TestRemoveRsvp:
     def test_user_absent_from_all_actions_after_remove(self, mock_table):
         mock_table.get_item.return_value = {"Item": _make_event(tentative=["user1"])}
         result = remove_rsvp("key1", "user1")
-        for a in ("accepted", "declined", "tentative"):
+        for a in ("accepted", "declined", "tentative", "subs"):
             assert "user1" not in result.get(a, [])
+
+    def test_removes_user_from_subs(self, mock_table):
+        mock_table.get_item.return_value = {"Item": _make_event(subs=["user1"])}
+        result = remove_rsvp("key1", "user1")
+        assert "user1" not in result["subs"]
 
     def test_raises_when_user_not_in_any_action(self, mock_table):
         mock_table.get_item.return_value = {"Item": _make_event()}
@@ -553,9 +572,19 @@ class TestUpdateRsvp:
         mock_table.get_item.return_value = {"Item": _make_event(accepted=["user1"])}
         result = update_rsvp("key1", "user1", "tentative")
         counts = sum(
-            "user1" in result.get(a, []) for a in ("accepted", "declined", "tentative")
+            "user1" in result.get(a, [])
+            for a in ("accepted", "declined", "tentative", "subs")
         )
         assert counts == 1
+
+    def test_toggles_off_subs_when_clicking_same_action(self, mock_table):
+        """Mirrors test_toggles_off_when_clicking_same_action for "subs" —
+        this is the behavior a non-Fulltime user's second ✅ click depends
+        on, since bot.py passes "subs" (not "accepted") as the action for
+        them. See TestSubsRouting in test_bot.py."""
+        mock_table.get_item.return_value = {"Item": _make_event(subs=["user1"])}
+        result = update_rsvp("key1", "user1", "subs")
+        assert "user1" not in result["subs"]
 
     def test_raises_when_event_not_found(self, mock_table):
         mock_table.get_item.return_value = {}

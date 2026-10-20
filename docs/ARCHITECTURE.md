@@ -161,7 +161,8 @@ erDiagram
         string app_id
         string created_by "optional, set for slash create-event only"
         string created_at "ISO 8601"
-        list accepted "user IDs"
+        list accepted "user IDs, Fulltime-role only"
+        list subs "user IDs, non-Fulltime accepts land here"
         list declined "user IDs"
         list tentative "user IDs"
         list goalie "user IDs, max 1"

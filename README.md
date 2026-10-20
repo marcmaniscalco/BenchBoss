@@ -446,12 +446,16 @@ Whenever `CLAUDE.md` is updated, update this `README.md` to reflect the new or c
 
 `/bb-help` replies (ephemerally, only visible to whoever runs it) with a static embed listing every slash command and what each button/emoji on an event message does. Named `bb-help` rather than the generic `help` so it doesn't collide with other bots' `/help` commands in the same server's autocomplete list. It's intentionally static for now (same content regardless of who asks) — see `build_help_embed` in `bench_boss/discord_api.py` if the command set changes and this needs updating.
 
-### Filltime Role Marking
+### Fulltime Role Marking and Subs
 
-When a user RSVPs via any button (accepted / declined / tentative) or is added via the **+** button, the bot checks whether they hold the **Filltime** role (Discord role ID `1085056467763208253`).
+When a user RSVPs via any button (accepted / declined / tentative) or is added via the **+** button, the bot checks whether they hold the **Fulltime** role (Discord role ID `1085056467763208253`).
 
 - **Role present** → name is stored and displayed as-is.
 - **Role absent** → the display name is stored with a `*` suffix (e.g. `Jane*`) so admins can see at a glance who is not a fulltime member.
+
+**Accepted is Fulltime-only.** Clicking the ✅ button is the same for everyone, but a non-Fulltime member is automatically routed into **Subs** instead of **Accepted** — there's no separate Subs button. This is a plain role gate, not a roster cap: every non-Fulltime accept lands in Subs regardless of how many Fulltime players already accepted. Clicking ✅ again still toggles correctly, since the toggle check follows the same role-based redirect. ❌/❔ (declined/tentative) are unaffected, and the goalie slot is open to anyone regardless of role.
+
+The **+** button is the one exception — an admin's typed choice there is always honored literally, even `accepted` for a non-Fulltime target, so admins can intentionally override the gate (or type `subs`/`s` to place anyone there on purpose).
 
 ### Creating and Editing RSVP Events
 

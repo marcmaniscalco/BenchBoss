@@ -11,7 +11,7 @@ from bench_boss.constants import EVENT_DRAFT_TTL_MINUTES, EVENT_TTL_HOURS
 
 logger = logging.getLogger(__name__)
 
-RSVP_ACTIONS = ("accepted", "declined", "tentative")
+RSVP_ACTIONS = ("accepted", "declined", "tentative", "subs")
 GOALIE_ACTION = "goalie"
 
 # Prefix for short-lived "retry this modal" draft items, kept in the same
@@ -75,6 +75,7 @@ def save_event(
         "accepted": [],
         "declined": [],
         "tentative": [],
+        "subs": [],
         "goalie": [],
         "ttl": _ttl_timestamp(end, start),
         "created_at": datetime.now(UTC).isoformat(),

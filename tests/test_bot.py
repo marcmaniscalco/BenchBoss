@@ -675,7 +675,10 @@ class TestRsvpInteraction:
             handle_interaction(
                 {
                     "type": MESSAGE_COMPONENT,
-                    "member": {"user": {"id": "guild-user"}},
+                    "member": {
+                        "roles": ["1085056467763208253"],
+                        "user": {"id": "guild-user"},
+                    },
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
@@ -753,7 +756,8 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user2", "accepted", "Jane*")
+        # Non-Fulltime accept is routed to "subs" — see TestSubsRouting.
+        mock_update.assert_called_once_with("key1", "user2", "subs", "Jane*")
 
     def test_name_not_suffixed_when_fulltime_role_present(self):
         updated = make_stored_event()
@@ -782,7 +786,8 @@ class TestRsvpInteraction:
                     "data": {"custom_id": "rsvp:accepted:key1"},
                 }
             )
-        mock_update.assert_called_once_with("key1", "user3", "accepted", None)
+        # Non-Fulltime accept is routed to "subs" — see TestSubsRouting.
+        mock_update.assert_called_once_with("key1", "user3", "subs", None)
 
     def test_embed_shows_display_name_when_member_names_present(self):
         updated = make_stored_event(accepted=["user1"], member_names={"user1": "Alice"})
@@ -794,6 +799,84 @@ class TestRsvpInteraction:
         accepted_field = next(f for f in fields if "Accepted" in f["name"])
         assert "Alice" in accepted_field["value"]
         assert "<@user1>" not in accepted_field["value"]
+
+
+class TestSubsRouting:
+    """The ✅ button is the only entry point that auto-routes based on
+    Fulltime role — the admin +/- modal (TestRsvpEditModalSubmit) always
+    honors whatever action is typed, and ❌/❔ are never redirected."""
+
+    def test_fulltime_accept_stays_accepted(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {
+                        "roles": ["1085056467763208253"],
+                        "user": {"id": "user1"},
+                    },
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "accepted", None)
+
+    def test_non_fulltime_accept_routes_to_subs(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"roles": [], "user": {"id": "user1"}},
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "subs", None)
+
+    def test_non_fulltime_decline_not_redirected(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"roles": [], "user": {"id": "user1"}},
+                    "data": {"custom_id": "rsvp:declined:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "declined", None)
+
+    def test_non_fulltime_tentative_not_redirected(self):
+        updated = make_stored_event()
+        with patch("bench_boss.bot.update_rsvp", return_value=updated) as mock_update:
+            handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {"roles": [], "user": {"id": "user1"}},
+                    "data": {"custom_id": "rsvp:tentative:key1"},
+                }
+            )
+        mock_update.assert_called_once_with("key1", "user1", "tentative", None)
+
+    def test_embed_shows_subs_after_non_fulltime_accept(self):
+        updated = make_stored_event(subs=["user1"], member_names={"user1": "Jane*"})
+        with patch("bench_boss.bot.update_rsvp", return_value=updated):
+            result = handle_interaction(
+                {
+                    "type": MESSAGE_COMPONENT,
+                    "member": {
+                        "nick": "Jane",
+                        "roles": [],
+                        "user": {"id": "user1"},
+                    },
+                    "data": {"custom_id": "rsvp:accepted:key1"},
+                }
+            )
+
+        fields = result["body"]["data"]["embeds"][0]["fields"]
+        subs_field = next(f for f in fields if "Subs" in f["name"])
+        assert "Jane*" in subs_field["value"]
+        accepted_field = next(f for f in fields if "Accepted" in f["name"])
+        assert accepted_field["value"] == "-"
 
 
 # ---------------------------------------------------------------------------
@@ -1402,6 +1485,34 @@ class TestRsvpEditModalSubmit:
                 bot_token="tok",
             )
         mock_set.assert_called_once_with("key1", "123456789", "tentative", None)
+
+    def test_single_letter_s_maps_to_subs(self):
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "s"),
+                bot_token="tok",
+            )
+        mock_set.assert_called_once_with("key1", "123456789", "subs", None)
+
+    def test_admin_can_add_non_fulltime_target_directly_to_accepted(self):
+        """Unlike the ✅ button, the admin +/- modal honors the literal
+        action typed — a non-Fulltime target can be placed in "accepted"
+        on purpose (no Fulltime role check gates set_rsvp at all). Only
+        the button auto-routes to "subs" — see TestSubsRouting."""
+        with (
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "123456789", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_set.assert_called_once_with("key1", "123456789", "accepted", None)
 
     def test_invalid_action_returns_ephemeral_error(self):
         with patch("bench_boss.bot.set_rsvp"):

@@ -284,6 +284,64 @@ class TestBuildEventEmbed:
         assert "EDT" in when_field["value"]
         assert "UTC-04:00" not in when_field["value"]
 
+    def test_subs_field_shows_zero_count_when_empty(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
+        field_names = [f["name"] for f in embed["fields"]]
+        assert any("Subs (0)" in n for n in field_names)
+
+    def test_subs_field_shows_dash_when_empty(self):
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
+        subs_field = next(f for f in embed["fields"] if "Subs" in f["name"])
+        assert subs_field["value"] == "-"
+
+    def test_subs_defaults_to_empty_when_omitted(self):
+        """subs is an optional kwarg (like goalie) so existing callers that
+        don't pass it yet still get a valid embed."""
+        embed = build_event_embed("Event", START, None, None, None, [], [], [])
+        subs_field = next(f for f in embed["fields"] if "Subs" in f["name"])
+        assert subs_field["value"] == "-"
+
+    def test_subs_field_shows_correct_count(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, [], [], [], subs=["u1", "u2"]
+        )
+        subs_field = next(f for f in embed["fields"] if "Subs" in f["name"])
+        assert "Subs (2)" in subs_field["name"]
+
+    def test_subs_field_shows_display_name_when_in_names(self):
+        embed = build_event_embed(
+            "Event",
+            START,
+            None,
+            None,
+            None,
+            [],
+            [],
+            [],
+            names={"user1": "Jane*"},
+            subs=["user1"],
+        )
+        subs_field = next(f for f in embed["fields"] if "Subs" in f["name"])
+        assert "Jane*" in subs_field["value"]
+
+    def test_subs_field_appears_directly_after_accepted_field(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, [], [], [], subs=["user1"]
+        )
+        field_names = [f["name"] for f in embed["fields"]]
+        accepted_idx = next(i for i, n in enumerate(field_names) if "Accepted" in n)
+        subs_idx = next(i for i, n in enumerate(field_names) if "Subs" in n)
+        assert subs_idx == accepted_idx + 1
+
+    def test_subs_does_not_affect_accepted_count(self):
+        embed = build_event_embed(
+            "Event", START, None, None, None, ["full1"], [], [], subs=["sub1"]
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        subs_field = next(f for f in embed["fields"] if "Subs" in f["name"])
+        assert "Accepted (1)" in accepted_field["name"]
+        assert "Subs (1)" in subs_field["name"]
+
 
 # ---------------------------------------------------------------------------
 # _build_gcal_url
@@ -526,6 +584,13 @@ class TestBuildHelpEmbed:
         assert "Edit" in controls_field["value"]
         assert "Delete" in controls_field["value"]
 
+    def test_describes_subs_routing(self):
+        embed = build_help_embed()
+        controls_field = next(
+            f for f in embed["fields"] if f["name"] == "On an Event Message"
+        )
+        assert "Subs" in controls_field["value"]
+
     def test_delete_is_described_as_admin_only_not_creator(self):
         # _handle_delete (bot.py) only checks _is_admin, with no creator
         # exception — unlike _handle_edit_event_button, which allows the
@@ -573,6 +638,16 @@ class TestBuildAddRsvpModal:
         }
         assert "user" in input_ids
         assert "action" in input_ids
+
+    def test_action_placeholder_mentions_subs(self):
+        modal = build_add_rsvp_modal("key1")
+        action_input = next(
+            comp
+            for row in modal["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "action"
+        )
+        assert "subs" in action_input["placeholder"]
 
 
 class TestBuildRemoveRsvpModal:

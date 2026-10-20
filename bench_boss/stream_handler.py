@@ -120,6 +120,7 @@ def _post_next_event(
         accepted=[],
         declined=[],
         tentative=[],
+        subs=[],
     )
     components = build_rsvp_components(new_event_key)
 
