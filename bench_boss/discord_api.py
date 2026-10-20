@@ -12,6 +12,7 @@ _RSVP_LABELS = {
     "accepted": "✅ Accepted",
     "declined": "❌ Declined",
     "tentative": "❔ Tentative",
+    "subs": "🔄 Subs",
 }
 
 _RSVP_ICONS = {
@@ -120,6 +121,7 @@ def build_event_embed(
     tentative: list[str],
     names: dict[str, str] | None = None,
     goalie: list[str] | None = None,
+    subs: list[str] | None = None,
 ) -> dict:
     """Build a Discord embed dict in Apollo style."""
     fields: list[dict] = [
@@ -160,6 +162,7 @@ def build_event_embed(
     fields.extend(
         [
             _rsvp_field("accepted", accepted, names),
+            _rsvp_field("subs", subs or [], names),
             _rsvp_field("declined", declined, names),
             _rsvp_field("tentative", tentative, names),
         ]
@@ -299,7 +302,8 @@ def build_help_embed() -> dict:
             {
                 "name": "On an Event Message",
                 "value": (
-                    "✅ / ❌ / ❔ — RSVP Accepted / Declined / Tentative\n"
+                    "✅ / ❌ / ❔ — RSVP Accepted / Declined / Tentative "
+                    "(✅ from a non-Fulltime member goes to Subs instead)\n"
                     "🇬 — toggle yourself as goalie (max one per event)\n"
                     "➕ / ➖ — admin: add or remove someone else's RSVP "
                     "by name/mention\n"
@@ -341,8 +345,8 @@ def build_add_rsvp_modal(event_key: str) -> dict:
                         "label": "RSVP Status",
                         "style": 1,  # SHORT
                         "placeholder": (
-                            "accepted / declined / tentative / goalie  "
-                            "(or a / d / t / g)"
+                            "accepted / declined / tentative / goalie / subs  "
+                            "(or a / d / t / g / s)"
                         ),
                         "required": True,
                         "min_length": 1,

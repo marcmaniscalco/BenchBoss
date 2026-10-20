@@ -54,7 +54,13 @@ DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7
 MODAL = 9
 
-_ACTION_ALIASES = {"a": "accepted", "d": "declined", "t": "tentative", "g": "goalie"}
+_ACTION_ALIASES = {
+    "a": "accepted",
+    "d": "declined",
+    "t": "tentative",
+    "g": "goalie",
+    "s": "subs",
+}
 
 
 def _has_fulltime_role(roles: list) -> bool:
@@ -346,6 +352,7 @@ def _handle_schedule(
         declined=[],
         tentative=[],
         goalie=[],
+        subs=[],
     )
     components = build_rsvp_components(event_key)
 
@@ -421,22 +428,38 @@ def _handle_rsvp(body: dict) -> dict:
     member = body.get("member") or {}
     user_data = member.get("user") or body.get("user") or {}
     user_id = user_data.get("id", "")
+    is_fulltime = _has_fulltime_role(member.get("roles", []))
     display_name = (
         member.get("nick")
         or user_data.get("global_name")
         or user_data.get("username")
         or None
     )
-    if (
-        member
-        and display_name is not None
-        and not _has_fulltime_role(member.get("roles", []))
-    ):
+    if member and display_name is not None and not is_fulltime:
         display_name = display_name + "*"
 
+    # Only Fulltime players land in "accepted" — anyone else clicking the
+    # same accept button is routed to "subs" instead. The redirect only
+    # applies to a fresh accept: update_rsvp keys the toggle-off check off
+    # the user's actual current list, so a non-Fulltime member an admin
+    # placed in "accepted" still toggles off with this same button instead
+    # of being moved to "subs". `member` must be present too, or a DM
+    # interaction (no guild roles to check) would redirect everyone.
+    fallback_action = (
+        "subs" if action == "accepted" and member and not is_fulltime else None
+    )
+
     try:
-        event = update_rsvp(event_key, user_id, action, display_name)
-        logger.info("RSVP %s for event %s by user %s", action, event_key, user_id)
+        event = update_rsvp(
+            event_key, user_id, action, display_name, fallback_action=fallback_action
+        )
+        applied_action = next(
+            (a for a in RSVP_ACTIONS if user_id in event.get(a, [])),
+            f"{action} (removed)",
+        )
+        logger.info(
+            "RSVP %s for event %s by user %s", applied_action, event_key, user_id
+        )
     except ValueError:
         logger.warning("RSVP failed — event not found: %s", event_key)
         return _message("Event not found.")
@@ -458,6 +481,7 @@ def _handle_rsvp(body: dict) -> dict:
         tentative=event.get("tentative", []),
         names=event.get("member_names") or {},
         goalie=event.get("goalie", []),
+        subs=event.get("subs", []),
     )
     components = build_rsvp_components(event_key)
 
@@ -681,6 +705,7 @@ def _handle_goalie_rsvp(body: dict) -> dict:
         tentative=event.get("tentative", []),
         names=event.get("member_names") or {},
         goalie=event.get("goalie", []),
+        subs=event.get("subs", []),
     )
     components = build_rsvp_components(event_key)
 
@@ -907,7 +932,8 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
             return _ephemeral(f"Added **{display_name or user_id}** as goalie.")
         if action not in RSVP_ACTIONS:
             return _ephemeral(
-                "Invalid RSVP status — use: accepted, declined, tentative, or goalie."
+                "Invalid RSVP status — use: accepted, declined, tentative, subs, "
+                "or goalie."
             )
         try:
             event = set_rsvp(event_key, user_id, action, display_name)
@@ -982,6 +1008,7 @@ def _handle_create_event_submit(body: dict, bot_token: str = "") -> dict:
         declined=[],
         tentative=[],
         goalie=[],
+        subs=[],
     )
     components = build_rsvp_components(event_key)
 
@@ -1098,6 +1125,7 @@ def _update_channel_message(event: dict, bot_token: str) -> None:
         tentative=event.get("tentative", []),
         names=event.get("member_names") or {},
         goalie=event.get("goalie", []),
+        subs=event.get("subs", []),
     )
     event_key = event["event_key"]
     components = build_rsvp_components(event_key)

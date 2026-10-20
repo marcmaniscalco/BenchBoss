@@ -11,7 +11,7 @@ from bench_boss.constants import EVENT_DRAFT_TTL_MINUTES, EVENT_TTL_HOURS
 
 logger = logging.getLogger(__name__)
 
-RSVP_ACTIONS = ("accepted", "declined", "tentative")
+RSVP_ACTIONS = ("accepted", "declined", "tentative", "subs")
 GOALIE_ACTION = "goalie"
 
 # Prefix for short-lived "retry this modal" draft items, kept in the same
@@ -75,6 +75,7 @@ def save_event(
         "accepted": [],
         "declined": [],
         "tentative": [],
+        "subs": [],
         "goalie": [],
         "ttl": _ttl_timestamp(end, start),
         "created_at": datetime.now(UTC).isoformat(),
@@ -306,13 +307,25 @@ def set_goalie(event_key: str, user_id: str, display_name: str | None = None) ->
 
 
 def update_rsvp(
-    event_key: str, user_id: str, action: str, display_name: str | None = None
+    event_key: str,
+    user_id: str,
+    action: str,
+    display_name: str | None = None,
+    fallback_action: str | None = None,
 ) -> dict:
     """
     Toggle a user's RSVP for an event.
 
     If the user already has this action, remove them (toggle off).
-    Otherwise remove them from any other set and add them to this one.
+    Otherwise remove them from any other set and add them to this one —
+    or, if `fallback_action` is given and the user isn't already in
+    `action`, add them to `fallback_action` instead. This lets a caller
+    route a fresh RSVP elsewhere (e.g. a non-Fulltime accept to "subs")
+    while still toggling off a user an admin placed in `action` directly,
+    since that check is keyed off the user's actual current list rather
+    than the caller's intent. A user already in `fallback_action` also
+    toggles off on a repeat call, rather than being cleared and
+    immediately re-added to it.
     Returns the updated event item.
     """
     event = get_event(event_key)
@@ -320,14 +333,19 @@ def update_rsvp(
         logger.warning("Event not found: %s", event_key)
         raise ValueError(f"Event {event_key!r} not found")
 
-    already_in_action = user_id in event.get(action, [])
+    in_action = user_id in event.get(action, [])
+    in_fallback = fallback_action is not None and user_id in event.get(
+        fallback_action, []
+    )
+    already_in_action = in_action or in_fallback
+    target_action = action if in_action or fallback_action is None else fallback_action
     _clear_user_from_rsvps(event, user_id)
     names = dict(event.get("member_names") or {})
     if not already_in_action:
         # Remove from goalie — a user can't be in both
         if user_id in event.get(GOALIE_ACTION, []):
             event[GOALIE_ACTION] = []
-        event[action] = event.get(action, []) + [user_id]
+        event[target_action] = event.get(target_action, []) + [user_id]
         if display_name:
             names[user_id] = display_name
     else:
