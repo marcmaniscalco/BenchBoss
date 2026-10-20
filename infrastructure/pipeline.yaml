@@ -187,6 +187,16 @@ Resources:
       Source:
         Type: CODEPIPELINE
         BuildSpec: integration-buildspec.yml
+      # The IntegrationTest/SmokeTest pipeline action (below) passes two
+      # input artifacts: SourceArtifact (primary) and QaStackOutput. Without
+      # a matching SecondarySources entry here, CodeBuild has nowhere to
+      # mount the second one (integration-buildspec.yml reads it via
+      # $CODEBUILD_SRC_DIR_QaStackOutput) and CodePipeline fails the action
+      # with "No primary source specified in job configuration" before a
+      # build even starts — no CodeBuild log is ever produced.
+      SecondarySources:
+        - Type: CODEPIPELINE
+          SourceIdentifier: QaStackOutput
 
   # ────────────────────────────────────────────────────────────────────────────
   # Cleanup CodeBuild — deletes unused Lambda versions after every deploy, so
