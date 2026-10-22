@@ -839,20 +839,37 @@ def _parse_event_modal_fields(
     )
 
 
+class _GuildSearchFailed(Exception):
+    """The guild-member search request itself failed (network error or a
+    non-2xx response) — distinct from a successful search that found no
+    match. A caller must not treat this the same as "no match": doing so
+    could mistake a Discord outage or rate limit for "nobody has this
+    name" and silently create a guest for someone who's a real member.
+    """
+
+
 def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | None:
-    """Search a guild for a member by username. Returns the user ID or None."""
-    resp = requests.get(
-        f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
-        params={"query": query, "limit": 1},
-        headers={
-            "Authorization": f"Bot {bot_token}",
-            "Content-Type": "application/json",
-        },
-        timeout=10,
-    )
+    """Search a guild for a member by username.
+
+    Returns the user ID, or None if the search succeeded but found no
+    match. Raises `_GuildSearchFailed` if the request itself failed.
+    """
+    try:
+        resp = requests.get(
+            f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
+            params={"query": query, "limit": 1},
+            headers={
+                "Authorization": f"Bot {bot_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("Guild member search request failed for %r: %s", query, e)
+        raise _GuildSearchFailed from e
     if not resp.ok:
         logger.warning("Guild member search failed for %r: %s", query, resp.status_code)
-        return None
+        raise _GuildSearchFailed(resp.status_code)
     members = resp.json()
     return members[0]["user"]["id"] if members else None
 
@@ -924,7 +941,17 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
 
         guild_id = event.get("guild_id") if event else None
         if not user_id and guild_id and bot_token:
-            user_id = _search_guild_member(guild_id, raw_user, bot_token)
+            try:
+                user_id = _search_guild_member(guild_id, raw_user, bot_token)
+            except _GuildSearchFailed:
+                # Unknown whether this name belongs to a real member —
+                # don't guess. Treating this the same as "no match" could
+                # silently turn a real member into a brand-new guest just
+                # because Discord's search request failed.
+                return _ephemeral(
+                    "Couldn't search Discord members right now — try "
+                    "again, or use their exact @mention/ID."
+                )
 
         if not user_id:
             if modal_type == "remove_rsvp_modal":
@@ -933,16 +960,25 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                     "@mention, numeric ID, or exact name."
                 )
             # No match at all, Discord or otherwise — add them as a new
-            # guest with no Discord account, keyed by a synthetic ID.
+            # guest with no Discord account, keyed by a synthetic ID. Any
+            # trailing '*' on the typed name is stripped first so it
+            # isn't doubled by the one we add below.
             user_id = generate_guest_id()
             is_new_guest = True
 
     if is_new_guest:
-        display_name = f"{raw_user}*"
-    elif is_guest_id(user_id):
-        # Reached only via the name-match fallback above, which already
-        # required a loaded `event` — an existing guest's stored name
-        # always carries the trailing '*' from when they were added.
+        display_name = f"{raw_user.rstrip('*').strip()}*"
+    elif is_guest_id(user_id) or (
+        modal_type == "remove_rsvp_modal" and event is not None
+    ):
+        # Guests always resolve this way (no Discord profile to fetch).
+        # For a remove, reuse the name already on file instead — nothing
+        # downstream needs a *fresh* name for someone about to be
+        # removed, so this skips a Discord API call purely spent on
+        # confirmation-message text. Only applies when `event` is
+        # already loaded (the roster-match/guild-search branch above
+        # ran); an admin removing by @mention/ID still gets a fresh
+        # lookup, unchanged from before this feature existed.
         display_name = (event.get("member_names") or {}).get(user_id, raw_user)
     else:
         guild_id = body.get("guild_id")

@@ -2161,6 +2161,102 @@ class TestRsvpEditModalSubmitGuests:
             )
         assert "new guest" not in result["body"]["data"]["content"].lower()
 
+    def test_new_guest_name_with_trailing_star_is_not_doubled(self):
+        # raw_user="Bob*" must store "Bob*", not "Bob**" — the trailing
+        # '*' marker is stripped from the typed name before one is added.
+        with (
+            patch("bench_boss.bot.get_event", return_value=make_stored_event()),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "Bob*", "subs"),
+                bot_token="tok",
+            )
+        display_name = mock_set.call_args[0][3]
+        assert display_name == "Bob*"
+
+    def test_guild_search_failure_returns_error_instead_of_creating_guest(self):
+        # A non-2xx from Discord's search must not be treated the same as
+        # "search succeeded, no match" — otherwise an outage or rate
+        # limit would silently turn a real member into a phantom guest.
+        event = {**make_stored_event(), "guild_id": "guild1"}
+        mock_resp = MagicMock()
+        mock_resp.ok = False
+        mock_resp.status_code = 500
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.requests.get", return_value=mock_resp),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "RealPlayer", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_set.assert_not_called()
+        assert result["body"]["data"]["flags"] == 64
+        assert "Couldn't search" in result["body"]["data"]["content"]
+
+    def test_guild_search_network_error_returns_error_instead_of_creating_guest(self):
+        event = {**make_stored_event(), "guild_id": "guild1"}
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch(
+                "bench_boss.bot.requests.get",
+                side_effect=ConnectionError("network unreachable"),
+            ),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "RealPlayer", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_set.assert_not_called()
+        assert "Couldn't search" in result["body"]["data"]["content"]
+
+    def test_remove_guest_skips_discord_member_fetch(self):
+        # Nothing downstream needs a *fresh* Discord lookup for someone
+        # about to be removed — the stored name is enough.
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.remove_rsvp") as mock_remove,
+            patch("bench_boss.bot._fetch_guild_member") as mock_fetch,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "Jamie Sub"),
+                bot_token="tok",
+            )
+        mock_fetch.assert_not_called()
+        mock_remove.assert_called_once_with("key1", "guest:aaaaaaaa")
+
+    def test_remove_real_member_matched_by_name_skips_discord_fetch(self):
+        event = make_stored_event(
+            accepted=["123456789"],
+            member_names={"123456789": "Marc*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.remove_rsvp") as mock_remove,
+            patch("bench_boss.bot._fetch_guild_member") as mock_fetch,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "marc"),
+                bot_token="tok",
+            )
+        mock_fetch.assert_not_called()
+        mock_remove.assert_called_once_with("key1", "123456789")
+        assert "Marc" in result["body"]["data"]["content"]
+
 
 # ---------------------------------------------------------------------------
 # _fetch_member_display_name

@@ -704,6 +704,18 @@ class TestBuildAddRsvpModal:
         )
         assert "subs" in action_input["placeholder"]
 
+    def test_user_input_has_a_max_length(self):
+        # Embed field values have a 1024-char Discord limit — an
+        # unbounded guest name could blow past it on its own.
+        modal = build_add_rsvp_modal("key1")
+        user_input = next(
+            comp
+            for row in modal["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "user"
+        )
+        assert 0 < user_input["max_length"] <= 1024
+
 
 class TestBuildRemoveRsvpModal:
     def test_custom_id_contains_event_key(self):
@@ -721,6 +733,16 @@ class TestBuildRemoveRsvpModal:
         }
         assert "user" in input_ids
         assert "action" not in input_ids
+
+    def test_user_input_has_a_max_length(self):
+        modal = build_remove_rsvp_modal("key1")
+        user_input = next(
+            comp
+            for row in modal["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "user"
+        )
+        assert 0 < user_input["max_length"] <= 1024
 
 
 class TestBuildEventModal:

@@ -346,6 +346,7 @@ def build_add_rsvp_modal(event_key: str) -> dict:
                             "@username, user ID, or a unique name (no Discord account)"
                         ),
                         "required": True,
+                        "max_length": 50,
                     }
                 ],
             },
@@ -387,6 +388,7 @@ def build_remove_rsvp_modal(event_key: str) -> dict:
                         "style": 1,
                         "placeholder": "@username, user ID, or exact name",
                         "required": True,
+                        "max_length": 50,
                     }
                 ],
             },

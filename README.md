@@ -467,6 +467,7 @@ The **User** field on both modals also accepts a plain name, not just an `@menti
 
 - On **+**, if the typed value isn't a mention/ID and doesn't match anyone found via Discord's guild member search, it's checked against the names already on this event's RSVP list (case-insensitively, ignoring the trailing `*`). A match — guest or Discord member — is treated as that same person and their status is updated/moved; no match creates a **new** guest under a synthetic ID, with the typed name stored as their display name (suffixed with `*`, same as any non-Fulltime member). Because a repeat name always reuses the existing entry rather than creating a second one, names stay unique per event without needing to reject anything — pick a distinct name for each new guest (e.g. "Jamie S." vs "Jamie T.") so they don't get merged into one entry.
 - On **-**, a guest is looked up and removed by that same exact name.
+- This means two different *real* people can't be tracked separately on the same event if they'd otherwise share an identical typed name (and no mention/ID/guild match to tell them apart) — one always collapses into the other's existing entry rather than creating a duplicate. Give them distinguishing names up front (e.g. "Jamie S." vs "Jamie T.") if that's a risk for a given event.
 
 ### Creating and Editing RSVP Events
 
