@@ -12,10 +12,39 @@ from bench_boss.discord_api import (
     build_remove_rsvp_modal,
     build_retry_button,
     build_rsvp_components,
+    render_participant,
 )
 
 START = datetime(2026, 4, 5, 19, 0, tzinfo=UTC)
 END = START + timedelta(hours=1)
+
+
+# ---------------------------------------------------------------------------
+# render_participant
+# ---------------------------------------------------------------------------
+
+
+class TestRenderParticipant:
+    def test_returns_stored_name_when_known(self):
+        assert render_participant("u1", {"u1": "Alice"}) == "Alice"
+
+    def test_falls_back_to_mention_for_real_user_with_no_name(self):
+        assert render_participant("123456789", {}) == "<@123456789>"
+
+    def test_falls_back_to_mention_when_names_is_none(self):
+        assert render_participant("123456789", None) == "<@123456789>"
+
+    def test_falls_back_to_placeholder_for_guest_with_no_name(self):
+        # A guest ID is synthetic, not a real Discord snowflake — a raw
+        # "<@guest:xxxxxxxx>" would render as broken, literal text rather
+        # than an actual mention, so this must not use the mention format.
+        assert render_participant("guest:aaaaaaaa", {}) == "an unnamed guest"
+
+    def test_stored_name_takes_priority_over_guest_placeholder(self):
+        assert (
+            render_participant("guest:aaaaaaaa", {"guest:aaaaaaaa": "Jamie Sub*"})
+            == "Jamie Sub*"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +260,32 @@ class TestBuildEventEmbed:
         goalie_field = next(f for f in embed["fields"] if "Goalie" in f["name"])
         assert "Alice" in goalie_field["value"]
         assert "<@user1>" not in goalie_field["value"]
+
+    def test_goalie_field_shows_placeholder_for_unnamed_guest(self):
+        # A guest ID (synthetic, not a real Discord snowflake) with no
+        # stored name must never fall back to a raw "<@guest:...>" — that
+        # renders as broken, literal text rather than a mention.
+        embed = build_event_embed(
+            "Event", START, None, None, None, [], [], [], goalie=["guest:aaaaaaaa"]
+        )
+        goalie_field = next(f for f in embed["fields"] if "Goalie" in f["name"])
+        assert "<@guest:" not in goalie_field["value"]
+        assert goalie_field["value"] == "an unnamed guest"
+
+    def test_rsvp_field_shows_placeholder_for_unnamed_guest(self):
+        embed = build_event_embed(
+            "Event",
+            START,
+            None,
+            None,
+            None,
+            accepted=["guest:aaaaaaaa"],
+            declined=[],
+            tentative=[],
+        )
+        accepted_field = next(f for f in embed["fields"] if "Accepted" in f["name"])
+        assert "<@guest:" not in accepted_field["value"]
+        assert "an unnamed guest" in accepted_field["value"]
 
     def test_goalie_field_appears_before_rsvp_fields(self):
         embed = build_event_embed(
@@ -649,6 +704,18 @@ class TestBuildAddRsvpModal:
         )
         assert "subs" in action_input["placeholder"]
 
+    def test_user_input_has_a_max_length(self):
+        # Embed field values have a 1024-char Discord limit — an
+        # unbounded guest name could blow past it on its own.
+        modal = build_add_rsvp_modal("key1")
+        user_input = next(
+            comp
+            for row in modal["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "user"
+        )
+        assert 0 < user_input["max_length"] <= 1024
+
 
 class TestBuildRemoveRsvpModal:
     def test_custom_id_contains_event_key(self):
@@ -666,6 +733,16 @@ class TestBuildRemoveRsvpModal:
         }
         assert "user" in input_ids
         assert "action" not in input_ids
+
+    def test_user_input_has_a_max_length(self):
+        modal = build_remove_rsvp_modal("key1")
+        user_input = next(
+            comp
+            for row in modal["components"]
+            for comp in row["components"]
+            if comp["custom_id"] == "user"
+        )
+        assert 0 < user_input["max_length"] <= 1024
 
 
 class TestBuildEventModal:

@@ -21,6 +21,7 @@ from bench_boss.discord_api import (
     build_remove_rsvp_modal,
     build_retry_button,
     build_rsvp_components,
+    render_participant,
 )
 from bench_boss.dynamo import (
     RSVP_ACTIONS,
@@ -38,6 +39,7 @@ from bench_boss.dynamo import (
     update_event,
     update_rsvp,
 )
+from bench_boss.guest import generate_guest_id, is_guest_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,33 @@ def _is_admin(body: dict) -> bool:
         return bool(int(permissions) & _ADMINISTRATOR)
     except (ValueError, TypeError):
         return False
+
+
+def _normalize_name_for_match(name: str) -> str:
+    """Lowercase and strip the trailing '*' non-Fulltime marker so a typed
+    name matches the stored display name regardless of that suffix."""
+    return name.strip().rstrip("*").strip().lower()
+
+
+def _find_member_name_match(event: dict, name: str) -> str | None:
+    """Case-insensitive lookup of an event participant's user_id by display
+    name (Discord member or guest), ignoring the trailing '*' marker.
+
+    A guest has no @mention/ID, so this is the only way an admin can refer
+    back to one — e.g. to move them between lists (Subs -> Accepted,
+    Accepted -> Subs/Declined) via the same +/- modal used for Discord
+    members. A match is always treated as "this is the same person,
+    update their RSVP" rather than rejected as a collision — that's what
+    keeps names unique per event in practice, without a separate check
+    that would otherwise block the exact move this exists to support.
+    """
+    target = _normalize_name_for_match(name)
+    if not target:
+        return None
+    for uid, display in (event.get("member_names") or {}).items():
+        if _normalize_name_for_match(display) == target:
+            return uid
+    return None
 
 
 def _get_user_id(body: dict) -> str:
@@ -577,6 +606,8 @@ def _store_button_refs(body: dict, event_key: str) -> None:
 
 
 def _handle_add_rsvp_button(body: dict) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("Only admins can add another player's RSVP.")
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
     return {
@@ -586,6 +617,8 @@ def _handle_add_rsvp_button(body: dict) -> dict:
 
 
 def _handle_remove_rsvp_button(body: dict) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("Only admins can remove another player's RSVP.")
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
     return {
@@ -675,7 +708,7 @@ def _handle_goalie_rsvp(body: dict) -> dict:
     current_goalie = event.get("goalie", [])
     if current_goalie and user_id not in current_goalie:
         names_map = event.get("member_names") or {}
-        existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
+        existing = render_participant(current_goalie[0], names_map)
         return _ephemeral(
             f"**{existing}** is already the goalie. "
             "Remove them first before adding a new one."
@@ -806,20 +839,37 @@ def _parse_event_modal_fields(
     )
 
 
+class _GuildSearchFailed(Exception):
+    """The guild-member search request itself failed (network error or a
+    non-2xx response) — distinct from a successful search that found no
+    match. A caller must not treat this the same as "no match": doing so
+    could mistake a Discord outage or rate limit for "nobody has this
+    name" and silently create a guest for someone who's a real member.
+    """
+
+
 def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | None:
-    """Search a guild for a member by username. Returns the user ID or None."""
-    resp = requests.get(
-        f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
-        params={"query": query, "limit": 1},
-        headers={
-            "Authorization": f"Bot {bot_token}",
-            "Content-Type": "application/json",
-        },
-        timeout=10,
-    )
+    """Search a guild for a member by username.
+
+    Returns the user ID, or None if the search succeeded but found no
+    match. Raises `_GuildSearchFailed` if the request itself failed.
+    """
+    try:
+        resp = requests.get(
+            f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
+            params={"query": query, "limit": 1},
+            headers={
+                "Authorization": f"Bot {bot_token}",
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logger.error("Guild member search request failed for %r: %s", query, e)
+        raise _GuildSearchFailed from e
     if not resp.ok:
         logger.warning("Guild member search failed for %r: %s", query, resp.status_code)
-        return None
+        raise _GuildSearchFailed(resp.status_code)
     members = resp.json()
     return members[0]["user"]["id"] if members else None
 
@@ -864,44 +914,101 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     custom_id = body.get("data", {}).get("custom_id", "")
     modal_type, event_key = custom_id.split(":", 1)
 
+    if not _is_admin(body):
+        return _ephemeral("Only admins can add or remove another player's RSVP.")
+
     fields = _extract_modal_fields(body)
 
     raw_user = fields.get("user", "").strip()
+    if not raw_user:
+        return _ephemeral("Enter a name, @mention, or numeric ID.")
     user_id = _parse_user_id(raw_user)
+    is_new_guest = False
+    event = None
 
     if not user_id:
         event = get_event(event_key)
-        guild_id = event.get("guild_id") if event else None
-        if guild_id and bot_token:
-            user_id = _search_guild_member(guild_id, raw_user, bot_token)
-        if not user_id:
-            return _ephemeral(
-                "Could not find that user — try again with their "
-                "@mention or numeric ID."
-            )
 
-    guild_id = body.get("guild_id")
-    guild_member = (
-        _fetch_guild_member(guild_id, user_id, bot_token)
-        if guild_id and bot_token
-        else None
-    )
-    display_name = (
-        (
-            guild_member.get("nick")
-            or guild_member.get("user", {}).get("global_name")
-            or guild_member.get("user", {}).get("username")
-            or None
-        )
-        if guild_member
-        else None
-    )
-    if (
-        guild_member is not None
-        and display_name is not None
-        and not _has_fulltime_role(guild_member.get("roles", []))
+        # Check this event's own roster first — an *exact* name match
+        # (case/star-insensitive) must win over Discord's guild-member
+        # search below, which is a fuzzy `limit: 1` prefix match. Guild
+        # search going first could silently hijack a typed guest/member
+        # name to an unrelated guild member whose username happens to
+        # start with the same text, moving or removing the wrong person
+        # instead of the one the admin meant.
+        if event is not None:
+            user_id = _find_member_name_match(event, raw_user)
+
+        guild_id = event.get("guild_id") if event else None
+        if not user_id and guild_id and bot_token:
+            try:
+                user_id = _search_guild_member(guild_id, raw_user, bot_token)
+            except _GuildSearchFailed:
+                # Unknown whether this name belongs to a real member —
+                # don't guess. Treating this the same as "no match" could
+                # silently turn a real member into a brand-new guest just
+                # because Discord's search request failed.
+                return _ephemeral(
+                    "Couldn't search Discord members right now — try "
+                    "again, or use their exact @mention/ID."
+                )
+
+        if not user_id:
+            if modal_type == "remove_rsvp_modal":
+                return _ephemeral(
+                    "Could not find that user — try again with their "
+                    "@mention, numeric ID, or exact name."
+                )
+            # No match at all, Discord or otherwise — add them as a new
+            # guest with no Discord account, keyed by a synthetic ID. Any
+            # trailing '*' on the typed name is stripped first so it
+            # isn't doubled by the one we add below.
+            user_id = generate_guest_id()
+            is_new_guest = True
+
+    if is_new_guest:
+        display_name = f"{raw_user.rstrip('*').strip()}*"
+    elif is_guest_id(user_id) or (
+        modal_type == "remove_rsvp_modal" and event is not None
     ):
-        display_name = display_name + "*"
+        # Guests always resolve this way (no Discord profile to fetch).
+        # For a remove, reuse the name already on file instead — nothing
+        # downstream needs a *fresh* name for someone about to be
+        # removed, so this skips a Discord API call purely spent on
+        # confirmation-message text. Only applies when `event` is
+        # already loaded (the roster-match/guild-search branch above
+        # ran); an admin removing by @mention/ID still gets a fresh
+        # lookup, unchanged from before this feature existed.
+        display_name = (event.get("member_names") or {}).get(user_id, raw_user)
+    else:
+        guild_id = body.get("guild_id")
+        guild_member = (
+            _fetch_guild_member(guild_id, user_id, bot_token)
+            if guild_id and bot_token
+            else None
+        )
+        display_name = (
+            (
+                guild_member.get("nick")
+                or guild_member.get("user", {}).get("global_name")
+                or guild_member.get("user", {}).get("username")
+                or None
+            )
+            if guild_member
+            else None
+        )
+        if (
+            guild_member is not None
+            and display_name is not None
+            and not _has_fulltime_role(guild_member.get("roles", []))
+        ):
+            display_name = display_name + "*"
+
+    # A distinct suffix on a new guest's confirmation, rather than wording
+    # identical to an ordinary add — so a typo'd name (which silently
+    # creates a new guest instead of erroring, see the fallback above) is
+    # noticeable to the admin instead of looking like a normal add.
+    guest_note = " (new guest, no matching Discord account)" if is_new_guest else ""
 
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
@@ -915,7 +1022,7 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 return _ephemeral("You're already the goalie — only one is needed!")
             if current_goalie:
                 names_map = event.get("member_names") or {}
-                existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
+                existing = render_participant(current_goalie[0], names_map)
                 return _ephemeral(
                     f"**{existing}** is already the goalie. "
                     "Remove them first before adding a new one."
@@ -929,7 +1036,9 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 return _ephemeral(f"Failed to update goalie: {e}")
             if bot_token:
                 _update_channel_message(event, bot_token)
-            return _ephemeral(f"Added **{display_name or user_id}** as goalie.")
+            return _ephemeral(
+                f"Added **{display_name or user_id}** as goalie{guest_note}."
+            )
         if action not in RSVP_ACTIONS:
             return _ephemeral(
                 "Invalid RSVP status — use: accepted, declined, tentative, subs, "
@@ -944,7 +1053,9 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
             return _ephemeral(f"Failed to update RSVP: {e}")
         if bot_token:
             _update_channel_message(event, bot_token)
-        return _ephemeral(f"Added **{display_name or user_id}** as **{action}**.")
+        return _ephemeral(
+            f"Added **{display_name or user_id}** as **{action}**{guest_note}."
+        )
 
     # remove_rsvp_modal
     try:
