@@ -305,8 +305,11 @@ def build_help_embed() -> dict:
                     "✅ / ❌ / ❔ — RSVP Accepted / Declined / Tentative "
                     "(✅ from a non-Fulltime member goes to Subs instead)\n"
                     "🇬 — toggle yourself as goalie (max one per event)\n"
-                    "➕ / ➖ — admin: add or remove someone else's RSVP "
-                    "by name/mention\n"
+                    "➕ / ➖ — admins only: set or remove a player's RSVP "
+                    "status by @mention, numeric ID, or name (for players "
+                    "without Discord) — this is how admins move someone "
+                    "between lists, e.g. Subs ↔ Accepted or "
+                    "Accepted → Declined\n"
                     "✏️ Edit — admins, or (for events you created "
                     "yourself) you\n"
                     "Delete — admins only"
@@ -331,7 +334,9 @@ def build_add_rsvp_modal(event_key: str) -> dict:
                         "custom_id": "user",
                         "label": "User",
                         "style": 1,  # SHORT
-                        "placeholder": "@username or user ID",
+                        "placeholder": (
+                            "@username, user ID, or a unique name (no Discord account)"
+                        ),
                         "required": True,
                     }
                 ],
@@ -372,7 +377,7 @@ def build_remove_rsvp_modal(event_key: str) -> dict:
                         "custom_id": "user",
                         "label": "User",
                         "style": 1,
-                        "placeholder": "@username or user ID",
+                        "placeholder": "@username, user ID, or exact name",
                         "required": True,
                     }
                 ],

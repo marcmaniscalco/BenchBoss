@@ -69,6 +69,13 @@ def _has_fulltime_role(roles: list) -> bool:
 
 _ADMINISTRATOR = 1 << 3
 
+#: Prefix for synthetic IDs assigned to RSVPs added by an admin for someone
+#: without a Discord account. Never collides with a real Discord snowflake
+#: (always numeric), so `_is_guest_id` can tell the two apart everywhere a
+#: user_id shows up (display-name lookup, goalie assignment, etc.) without
+#: needing a separate flag threaded through the RSVP lists.
+_GUEST_ID_PREFIX = "guest:"
+
 
 def _is_admin(body: dict) -> bool:
     """Return True if the interacting member has the Administrator permission."""
@@ -77,6 +84,41 @@ def _is_admin(body: dict) -> bool:
         return bool(int(permissions) & _ADMINISTRATOR)
     except (ValueError, TypeError):
         return False
+
+
+def _is_guest_id(user_id: str) -> bool:
+    return user_id.startswith(_GUEST_ID_PREFIX)
+
+
+def _generate_guest_id() -> str:
+    return f"{_GUEST_ID_PREFIX}{uuid.uuid4().hex[:8]}"
+
+
+def _normalize_name_for_match(name: str) -> str:
+    """Lowercase and strip the trailing '*' non-Fulltime marker so a typed
+    name matches the stored display name regardless of that suffix."""
+    return name.strip().rstrip("*").strip().lower()
+
+
+def _find_member_name_match(event: dict, name: str) -> str | None:
+    """Case-insensitive lookup of an event participant's user_id by display
+    name (Discord member or guest), ignoring the trailing '*' marker.
+
+    A guest has no @mention/ID, so this is the only way an admin can refer
+    back to one — e.g. to move them between lists (Subs -> Accepted,
+    Accepted -> Subs/Declined) via the same +/- modal used for Discord
+    members. A match is always treated as "this is the same person,
+    update their RSVP" rather than rejected as a collision — that's what
+    keeps names unique per event in practice, without a separate check
+    that would otherwise block the exact move this exists to support.
+    """
+    target = _normalize_name_for_match(name)
+    if not target:
+        return None
+    for uid, display in (event.get("member_names") or {}).items():
+        if _normalize_name_for_match(display) == target:
+            return uid
+    return None
 
 
 def _get_user_id(body: dict) -> str:
@@ -577,6 +619,8 @@ def _store_button_refs(body: dict, event_key: str) -> None:
 
 
 def _handle_add_rsvp_button(body: dict) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("Only admins can add another player's RSVP.")
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
     return {
@@ -586,6 +630,8 @@ def _handle_add_rsvp_button(body: dict) -> dict:
 
 
 def _handle_remove_rsvp_button(body: dict) -> dict:
+    if not _is_admin(body):
+        return _ephemeral("Only admins can remove another player's RSVP.")
     event_key = body.get("data", {}).get("custom_id", "").split(":", 1)[1]
     _store_button_refs(body, event_key)
     return {
@@ -864,44 +910,73 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
     custom_id = body.get("data", {}).get("custom_id", "")
     modal_type, event_key = custom_id.split(":", 1)
 
+    if not _is_admin(body):
+        return _ephemeral("Only admins can add or remove another player's RSVP.")
+
     fields = _extract_modal_fields(body)
 
     raw_user = fields.get("user", "").strip()
+    if not raw_user:
+        return _ephemeral("Enter a name, @mention, or numeric ID.")
     user_id = _parse_user_id(raw_user)
+    is_new_guest = False
+    event = None
 
     if not user_id:
         event = get_event(event_key)
         guild_id = event.get("guild_id") if event else None
         if guild_id and bot_token:
             user_id = _search_guild_member(guild_id, raw_user, bot_token)
-        if not user_id:
-            return _ephemeral(
-                "Could not find that user — try again with their "
-                "@mention or numeric ID."
-            )
 
-    guild_id = body.get("guild_id")
-    guild_member = (
-        _fetch_guild_member(guild_id, user_id, bot_token)
-        if guild_id and bot_token
-        else None
-    )
-    display_name = (
-        (
-            guild_member.get("nick")
-            or guild_member.get("user", {}).get("global_name")
-            or guild_member.get("user", {}).get("username")
-            or None
+        if not user_id and event is not None:
+            # No mention/ID and no guild-search hit — fall back to an
+            # exact name match against this event's current roster. This
+            # is what lets an admin move an existing guest (who has no
+            # mention/ID) between lists by typing their name again, e.g.
+            # Subs -> Accepted or Accepted -> Subs/Declined.
+            user_id = _find_member_name_match(event, raw_user)
+
+        if not user_id:
+            if modal_type == "remove_rsvp_modal":
+                return _ephemeral(
+                    "Could not find that user — try again with their "
+                    "@mention, numeric ID, or exact name."
+                )
+            # No match at all, Discord or otherwise — add them as a new
+            # guest with no Discord account, keyed by a synthetic ID.
+            user_id = _generate_guest_id()
+            is_new_guest = True
+
+    if is_new_guest:
+        display_name = f"{raw_user}*"
+    elif _is_guest_id(user_id):
+        # Reached only via the name-match fallback above, which already
+        # required a loaded `event` — an existing guest's stored name
+        # always carries the trailing '*' from when they were added.
+        display_name = (event.get("member_names") or {}).get(user_id, raw_user)
+    else:
+        guild_id = body.get("guild_id")
+        guild_member = (
+            _fetch_guild_member(guild_id, user_id, bot_token)
+            if guild_id and bot_token
+            else None
         )
-        if guild_member
-        else None
-    )
-    if (
-        guild_member is not None
-        and display_name is not None
-        and not _has_fulltime_role(guild_member.get("roles", []))
-    ):
-        display_name = display_name + "*"
+        display_name = (
+            (
+                guild_member.get("nick")
+                or guild_member.get("user", {}).get("global_name")
+                or guild_member.get("user", {}).get("username")
+                or None
+            )
+            if guild_member
+            else None
+        )
+        if (
+            guild_member is not None
+            and display_name is not None
+            and not _has_fulltime_role(guild_member.get("roles", []))
+        ):
+            display_name = display_name + "*"
 
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
