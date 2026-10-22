@@ -1401,6 +1401,26 @@ class TestGoalieRsvpButton:
             result = handle_interaction(self._body())
         assert "not found" in result["body"]["data"]["content"].lower()
 
+    def test_error_message_uses_guest_name_when_existing_goalie_is_a_guest(self):
+        event = make_stored_event(
+            goalie=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(self._body(user_id="user1"))
+        assert "Jamie Sub" in result["body"]["data"]["content"]
+
+    def test_error_message_has_no_broken_mention_for_unnamed_guest_goalie(self):
+        # Defensive: a guest should always have a stored name, but if one
+        # somehow doesn't, the fallback must not be a raw "<@guest:...>"
+        # (which Discord would render as broken, literal text).
+        event = make_stored_event(goalie=["guest:aaaaaaaa"], member_names={})
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(self._body(user_id="user1"))
+        content = result["body"]["data"]["content"]
+        assert "<@guest:" not in content
+        assert "an unnamed guest" in content
+
 
 # ---------------------------------------------------------------------------
 # handle_interaction — RSVP edit modal submit
@@ -2063,6 +2083,83 @@ class TestRsvpEditModalSubmitGuests:
         assert user_id.startswith("guest:")
         assert display_name == "Guest Goalie*"
         assert "Guest Goalie" in result["body"]["data"]["content"]
+
+    def test_goalie_conflict_shows_guest_name_not_broken_mention(self):
+        event = make_stored_event(
+            goalie=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with patch("bench_boss.bot.get_event", return_value=event):
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "123456789", "goalie"),
+                bot_token="tok",
+            )
+        content = result["body"]["data"]["content"]
+        assert "<@guest:" not in content
+        assert "Jamie Sub" in content
+
+    def test_exact_roster_name_match_wins_over_guild_search(self):
+        # The guild member search is a fuzzy, limit-1 prefix match — an
+        # exact match against this event's own roster must be tried
+        # first, or a repeat of a guest's/member's exact name could get
+        # hijacked to an unrelated guild member instead of moving the
+        # right person.
+        event = {
+            **make_stored_event(
+                subs=["guest:aaaaaaaa"],
+                member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+            ),
+            "guild_id": "guild1",
+        }
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot._search_guild_member") as mock_search,
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Jamie Sub", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_search.assert_not_called()
+        mock_set.assert_called_once_with(
+            "key1", "guest:aaaaaaaa", "accepted", "Jamie Sub*"
+        )
+
+    def test_new_guest_confirmation_notes_no_discord_account(self):
+        # Distinct wording from an ordinary add/move, so a typo'd name —
+        # which silently creates a new guest instead of erroring — is
+        # noticeable to the admin rather than looking like a normal add.
+        with (
+            patch("bench_boss.bot.get_event", return_value=make_stored_event()),
+            patch("bench_boss.bot.set_rsvp"),
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "Brand New", "subs"),
+                bot_token="tok",
+            )
+        assert "new guest" in result["body"]["data"]["content"].lower()
+
+    def test_moving_existing_entry_confirmation_has_no_guest_note(self):
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp"),
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Jamie Sub", "accepted"
+                ),
+                bot_token="tok",
+            )
+        assert "new guest" not in result["body"]["data"]["content"].lower()
 
 
 # ---------------------------------------------------------------------------

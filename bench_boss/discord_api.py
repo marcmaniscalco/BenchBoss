@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from bench_boss.constants import TEAM_TIMEZONE
+from bench_boss.guest import is_guest_id
 
 BLURPLE = 0x5865F2
 
@@ -89,6 +90,21 @@ def _build_gcal_url(
     return "https://calendar.google.com/calendar/render?" + urlencode(params)
 
 
+def render_participant(uid: str, names: dict[str, str] | None) -> str:
+    """Render a participant for display in an embed/message.
+
+    Their stored display name if known; otherwise an `@mention` for a
+    real Discord user, or a placeholder for a guest (synthetic ID, no
+    Discord account) — a guest has no mention to fall back to, and a raw
+    `<@guest:xxxxxxxx>` would just render as broken, literal text.
+    """
+    if names and uid in names:
+        return names[uid]
+    if is_guest_id(uid):
+        return "an unnamed guest"
+    return f"<@{uid}>"
+
+
 def _rsvp_field(
     action: str, users: list[str], names: dict[str, str] | None = None
 ) -> dict:
@@ -96,15 +112,9 @@ def _rsvp_field(
     count = len(users)
     if users:
         sorted_users = sorted(
-            users,
-            key=lambda uid: (
-                names[uid] if names and uid in names else f"<@{uid}>"
-            ).endswith("*"),
+            users, key=lambda uid: render_participant(uid, names).endswith("*")
         )
-        value = "\n".join(
-            names[uid] if names and uid in names else f"<@{uid}>"
-            for uid in sorted_users
-        )
+        value = "\n".join(render_participant(uid, names) for uid in sorted_users)
     else:
         value = "-"
     return {"name": f"{label} ({count})", "value": value, "inline": True}
@@ -154,9 +164,7 @@ def build_event_embed(
     fields.append({"name": "\u200b", "value": "\u200b", "inline": False})
 
     goalie_list = goalie or []
-    goalie_name = (names.get(goalie_list[0]) if names and goalie_list else None) or (
-        f"<@{goalie_list[0]}>" if goalie_list else "-"
-    )
+    goalie_name = render_participant(goalie_list[0], names) if goalie_list else "-"
     fields.append({"name": "🇬 Goalie", "value": goalie_name, "inline": False})
 
     fields.extend(

@@ -21,6 +21,7 @@ from bench_boss.discord_api import (
     build_remove_rsvp_modal,
     build_retry_button,
     build_rsvp_components,
+    render_participant,
 )
 from bench_boss.dynamo import (
     RSVP_ACTIONS,
@@ -38,6 +39,7 @@ from bench_boss.dynamo import (
     update_event,
     update_rsvp,
 )
+from bench_boss.guest import generate_guest_id, is_guest_id
 
 logger = logging.getLogger(__name__)
 
@@ -69,13 +71,6 @@ def _has_fulltime_role(roles: list) -> bool:
 
 _ADMINISTRATOR = 1 << 3
 
-#: Prefix for synthetic IDs assigned to RSVPs added by an admin for someone
-#: without a Discord account. Never collides with a real Discord snowflake
-#: (always numeric), so `_is_guest_id` can tell the two apart everywhere a
-#: user_id shows up (display-name lookup, goalie assignment, etc.) without
-#: needing a separate flag threaded through the RSVP lists.
-_GUEST_ID_PREFIX = "guest:"
-
 
 def _is_admin(body: dict) -> bool:
     """Return True if the interacting member has the Administrator permission."""
@@ -84,14 +79,6 @@ def _is_admin(body: dict) -> bool:
         return bool(int(permissions) & _ADMINISTRATOR)
     except (ValueError, TypeError):
         return False
-
-
-def _is_guest_id(user_id: str) -> bool:
-    return user_id.startswith(_GUEST_ID_PREFIX)
-
-
-def _generate_guest_id() -> str:
-    return f"{_GUEST_ID_PREFIX}{uuid.uuid4().hex[:8]}"
 
 
 def _normalize_name_for_match(name: str) -> str:
@@ -721,7 +708,7 @@ def _handle_goalie_rsvp(body: dict) -> dict:
     current_goalie = event.get("goalie", [])
     if current_goalie and user_id not in current_goalie:
         names_map = event.get("member_names") or {}
-        existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
+        existing = render_participant(current_goalie[0], names_map)
         return _ephemeral(
             f"**{existing}** is already the goalie. "
             "Remove them first before adding a new one."
@@ -924,17 +911,20 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
 
     if not user_id:
         event = get_event(event_key)
-        guild_id = event.get("guild_id") if event else None
-        if guild_id and bot_token:
-            user_id = _search_guild_member(guild_id, raw_user, bot_token)
 
-        if not user_id and event is not None:
-            # No mention/ID and no guild-search hit — fall back to an
-            # exact name match against this event's current roster. This
-            # is what lets an admin move an existing guest (who has no
-            # mention/ID) between lists by typing their name again, e.g.
-            # Subs -> Accepted or Accepted -> Subs/Declined.
+        # Check this event's own roster first — an *exact* name match
+        # (case/star-insensitive) must win over Discord's guild-member
+        # search below, which is a fuzzy `limit: 1` prefix match. Guild
+        # search going first could silently hijack a typed guest/member
+        # name to an unrelated guild member whose username happens to
+        # start with the same text, moving or removing the wrong person
+        # instead of the one the admin meant.
+        if event is not None:
             user_id = _find_member_name_match(event, raw_user)
+
+        guild_id = event.get("guild_id") if event else None
+        if not user_id and guild_id and bot_token:
+            user_id = _search_guild_member(guild_id, raw_user, bot_token)
 
         if not user_id:
             if modal_type == "remove_rsvp_modal":
@@ -944,12 +934,12 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 )
             # No match at all, Discord or otherwise — add them as a new
             # guest with no Discord account, keyed by a synthetic ID.
-            user_id = _generate_guest_id()
+            user_id = generate_guest_id()
             is_new_guest = True
 
     if is_new_guest:
         display_name = f"{raw_user}*"
-    elif _is_guest_id(user_id):
+    elif is_guest_id(user_id):
         # Reached only via the name-match fallback above, which already
         # required a loaded `event` — an existing guest's stored name
         # always carries the trailing '*' from when they were added.
@@ -978,6 +968,12 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         ):
             display_name = display_name + "*"
 
+    # A distinct suffix on a new guest's confirmation, rather than wording
+    # identical to an ordinary add — so a typo'd name (which silently
+    # creates a new guest instead of erroring, see the fallback above) is
+    # noticeable to the admin instead of looking like a normal add.
+    guest_note = " (new guest, no matching Discord account)" if is_new_guest else ""
+
     if modal_type == "add_rsvp_modal":
         action = fields.get("action", "").strip().lower()
         action = _ACTION_ALIASES.get(action, action)
@@ -990,7 +986,7 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 return _ephemeral("You're already the goalie — only one is needed!")
             if current_goalie:
                 names_map = event.get("member_names") or {}
-                existing = names_map.get(current_goalie[0]) or f"<@{current_goalie[0]}>"
+                existing = render_participant(current_goalie[0], names_map)
                 return _ephemeral(
                     f"**{existing}** is already the goalie. "
                     "Remove them first before adding a new one."
@@ -1004,7 +1000,9 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 return _ephemeral(f"Failed to update goalie: {e}")
             if bot_token:
                 _update_channel_message(event, bot_token)
-            return _ephemeral(f"Added **{display_name or user_id}** as goalie.")
+            return _ephemeral(
+                f"Added **{display_name or user_id}** as goalie{guest_note}."
+            )
         if action not in RSVP_ACTIONS:
             return _ephemeral(
                 "Invalid RSVP status — use: accepted, declined, tentative, subs, "
@@ -1019,7 +1017,9 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
             return _ephemeral(f"Failed to update RSVP: {e}")
         if bot_token:
             _update_channel_message(event, bot_token)
-        return _ephemeral(f"Added **{display_name or user_id}** as **{action}**.")
+        return _ephemeral(
+            f"Added **{display_name or user_id}** as **{action}**{guest_note}."
+        )
 
     # remove_rsvp_modal
     try:
