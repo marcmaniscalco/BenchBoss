@@ -2,6 +2,7 @@ from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from bench_boss.calendar import CalendarEvent, WebCalReader
 
@@ -169,6 +170,109 @@ class TestGetEvents:
             reader = WebCalReader("https://example.com/cal.ics")
             with pytest.raises(Exception, match="404"):
                 reader.get_events()
+
+
+# ---------------------------------------------------------------------------
+# WebCalReader._fetch (retry on empty body)
+# ---------------------------------------------------------------------------
+
+
+class TestFetch:
+    def _mock_response(self, content: bytes) -> MagicMock:
+        mock_response = MagicMock()
+        mock_response.content = content
+        return mock_response
+
+    def test_returns_content_on_first_success(self):
+        raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                return_value=self._mock_response(raw),
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            assert reader._fetch() == raw
+        mock_get.assert_called_once()
+        mock_sleep.assert_not_called()
+
+    def test_retries_on_empty_body_then_succeeds(self):
+        raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
+        responses = [self._mock_response(b""), self._mock_response(raw)]
+        with (
+            patch(
+                "bench_boss.calendar.requests.get", side_effect=responses
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            assert reader._fetch() == raw
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_raises_after_all_attempts_return_empty_body(self):
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                return_value=self._mock_response(b""),
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            with pytest.raises(ValueError, match="empty body"):
+                reader._fetch()
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_retries_on_connection_error_then_succeeds(self):
+        raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                side_effect=[
+                    requests.exceptions.ConnectionError("boom"),
+                    self._mock_response(raw),
+                ],
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            assert reader._fetch() == raw
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_raises_last_error_after_all_attempts_raise(self):
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                side_effect=requests.exceptions.Timeout("timed out"),
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            with pytest.raises(requests.exceptions.Timeout, match="timed out"):
+                reader._fetch()
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_http_error_from_raise_for_status_is_retried(self):
+        raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
+        error_response = MagicMock()
+        error_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "503"
+        )
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                side_effect=[error_response, self._mock_response(raw)],
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            assert reader._fetch() == raw
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
