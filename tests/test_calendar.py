@@ -164,16 +164,25 @@ class TestGetEvents:
         assert len(reader.get_events()) == 2
 
     def test_fetch_raises_on_http_error(self):
+        """An HTTPError with no `.response` attached (not the usual shape
+        from `raise_for_status()`, but possible from other requests
+        internals) is treated as retryable by default, then re-raised
+        once retries run out."""
         mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = Exception("404")
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "404"
+        )
         with (
-            patch("bench_boss.calendar.requests.get", return_value=mock_response),
+            patch(
+                "bench_boss.calendar.requests.get", return_value=mock_response
+            ) as mock_get,
             patch("bench_boss.calendar.time.sleep") as mock_sleep,
         ):
             reader = WebCalReader("https://example.com/cal.ics")
-            with pytest.raises(Exception, match="404"):
+            with pytest.raises(requests.exceptions.HTTPError, match="404"):
                 reader.get_events()
-        mock_sleep.assert_not_called()
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
