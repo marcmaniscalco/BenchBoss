@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 # body, a connection error, or a 5xx. A short retry clears it up without
 # needing to wait for the next trigger (e.g. the next event's TTL
 # expiration) to retry.
-_FETCH_ATTEMPTS = 3
+#
+# Kept to 2 attempts: the stream Lambda's timeout is 30s
+# (infrastructure/template.yaml), and this runs before it posts/deletes
+# Discord messages, so worst case (2 * 10s request timeout + 1s delay = 21s)
+# needs to leave headroom for those calls rather than eating the whole budget.
+_FETCH_ATTEMPTS = 2
 _FETCH_RETRY_DELAY_SECONDS = 1
 
 

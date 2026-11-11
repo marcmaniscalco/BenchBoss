@@ -222,8 +222,8 @@ class TestFetch:
             reader = WebCalReader("https://example.com/cal.ics")
             with pytest.raises(ValueError, match="empty body"):
                 reader._fetch()
-        assert mock_get.call_count == 3
-        assert mock_sleep.call_count == 2
+        assert mock_get.call_count == 2
+        assert mock_sleep.call_count == 1
 
     def test_retries_on_connection_error_then_succeeds(self):
         raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
@@ -253,8 +253,8 @@ class TestFetch:
             reader = WebCalReader("https://example.com/cal.ics")
             with pytest.raises(requests.exceptions.Timeout, match="timed out"):
                 reader._fetch()
-        assert mock_get.call_count == 3
-        assert mock_sleep.call_count == 2
+        assert mock_get.call_count == 2
+        assert mock_sleep.call_count == 1
 
     def test_http_error_from_raise_for_status_is_retried(self):
         raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
