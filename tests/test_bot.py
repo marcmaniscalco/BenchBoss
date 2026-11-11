@@ -16,10 +16,12 @@ from bench_boss.bot import (
     PONG,
     UPDATE_MESSAGE,
     _ChannelPostRejected,
+    _closest_roster_name_match,
     _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
     _get_user_id,
+    _normalize_name_for_match,
     _parse_duration_minutes,
     _parse_event_datetime,
     _parse_event_modal_fields,
@@ -1451,6 +1453,39 @@ def make_rsvp_edit_submit(
     }
 
 
+class TestNormalizeNameForMatch:
+    def test_strips_single_trailing_star(self):
+        assert _normalize_name_for_match("Jamie Sub*") == "jamie sub"
+
+    def test_strips_multiple_trailing_stars(self):
+        # rstrip("*") removes every trailing '*', not just one — pin this
+        # since "Bob**" matching "Bob" relies on it.
+        assert _normalize_name_for_match("Bob**") == "bob"
+
+    def test_no_trailing_star_unchanged_besides_case(self):
+        assert _normalize_name_for_match("Bob") == "bob"
+
+    def test_strips_surrounding_whitespace(self):
+        assert _normalize_name_for_match("  Bob*  ") == "bob"
+
+
+class TestClosestRosterNameMatch:
+    def test_finds_close_typo(self):
+        event = make_stored_event(member_names={"guest:aaaaaaaa": "Jamie Sub*"})
+        assert _closest_roster_name_match(event, "Jaime Sub") == "Jamie Sub*"
+
+    def test_no_match_for_unrelated_name(self):
+        event = make_stored_event(member_names={"guest:aaaaaaaa": "Jamie Sub*"})
+        assert _closest_roster_name_match(event, "Totally Different") is None
+
+    def test_no_roster_returns_none(self):
+        assert _closest_roster_name_match(make_stored_event(), "Anyone") is None
+
+    def test_empty_name_returns_none(self):
+        event = make_stored_event(member_names={"guest:aaaaaaaa": "Jamie Sub*"})
+        assert _closest_roster_name_match(event, "   ") is None
+
+
 class TestRsvpEditModalSubmit:
     def test_add_calls_set_rsvp(self):
         with (
@@ -2256,6 +2291,104 @@ class TestRsvpEditModalSubmitGuests:
         mock_fetch.assert_not_called()
         mock_remove.assert_called_once_with("key1", "123456789")
         assert "Marc" in result["body"]["data"]["content"]
+
+    def test_add_typo_of_existing_guest_prompts_instead_of_duplicating(self):
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Jaime Sub", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_set.assert_not_called()
+        assert "Jamie Sub" in result["body"]["data"]["content"]
+        assert result["body"]["data"]["flags"] == 64
+
+    def test_remove_typo_of_existing_guest_suggests_exact_name(self):
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.remove_rsvp") as mock_remove,
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "Jaime Sub"),
+                bot_token="tok",
+            )
+        mock_remove.assert_not_called()
+        assert "Jamie Sub" in result["body"]["data"]["content"]
+
+    def test_add_genuinely_different_name_still_creates_new_guest(self):
+        # Regression: an existing roster entry shouldn't make the typo
+        # guard block an admin adding an unrelated new guest.
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Totally Different", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_set.assert_called_once()
+        assert "new guest" in result["body"]["data"]["content"].lower()
+
+    def test_add_missing_event_returns_early(self):
+        with patch("bench_boss.bot.get_event", return_value=None):
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "Nobody", "accepted"),
+                bot_token="tok",
+            )
+        assert "Event not found" in result["body"]["data"]["content"]
+
+    def test_remove_missing_event_returns_early(self):
+        with patch("bench_boss.bot.get_event", return_value=None):
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "Nobody"),
+                bot_token="tok",
+            )
+        assert "Event not found" in result["body"]["data"]["content"]
+
+    def test_guest_id_collision_regenerates(self):
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Someone Else*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+            patch(
+                "bench_boss.bot.generate_guest_id",
+                side_effect=["guest:aaaaaaaa", "guest:bbbbbbbb"],
+            ) as mock_generate,
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Brand New", "accepted"
+                ),
+                bot_token="tok",
+            )
+        assert mock_generate.call_count == 2
+        mock_set.assert_called_once_with(
+            "key1", "guest:bbbbbbbb", "accepted", "Brand New*"
+        )
 
 
 # ---------------------------------------------------------------------------

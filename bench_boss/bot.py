@@ -2,6 +2,7 @@
 Core bot logic.
 """
 
+import difflib
 import logging
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -106,6 +107,34 @@ def _find_member_name_match(event: dict, name: str) -> str | None:
         if _normalize_name_for_match(display) == target:
             return uid
     return None
+
+
+# Similarity threshold (difflib.SequenceMatcher ratio) above which a typed
+# name is treated as a likely typo of an existing roster entry rather than a
+# deliberately different name. High enough to avoid flagging genuinely
+# distinct short names (e.g. "Bob" vs "Rob") as near-matches.
+_TYPO_MATCH_CUTOFF = 0.8
+
+
+def _closest_roster_name_match(event: dict, name: str) -> str | None:
+    """Return an existing roster display name that's a close-but-inexact
+    match for `name`, or None.
+
+    Guards against a typo silently creating a duplicate guest (or failing
+    a remove with a generic error) when the admin meant an existing entry —
+    see `_find_member_name_match` for the exact-match case this supplements.
+    """
+    target = _normalize_name_for_match(name)
+    if not target:
+        return None
+    candidates = {
+        _normalize_name_for_match(display): display
+        for display in (event.get("member_names") or {}).values()
+    }
+    matches = difflib.get_close_matches(
+        target, candidates.keys(), n=1, cutoff=_TYPO_MATCH_CUTOFF
+    )
+    return candidates[matches[0]] if matches else None
 
 
 def _get_user_id(body: dict) -> str:
@@ -928,6 +957,8 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
 
     if not user_id:
         event = get_event(event_key)
+        if event is None:
+            return _ephemeral("Event not found.")
 
         # Check this event's own roster first — an *exact* name match
         # (case/star-insensitive) must win over Discord's guild-member
@@ -936,10 +967,9 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
         # name to an unrelated guild member whose username happens to
         # start with the same text, moving or removing the wrong person
         # instead of the one the admin meant.
-        if event is not None:
-            user_id = _find_member_name_match(event, raw_user)
+        user_id = _find_member_name_match(event, raw_user)
 
-        guild_id = event.get("guild_id") if event else None
+        guild_id = event.get("guild_id")
         if not user_id and guild_id and bot_token:
             try:
                 user_id = _search_guild_member(guild_id, raw_user, bot_token)
@@ -954,16 +984,42 @@ def _handle_rsvp_edit_submit(body: dict, bot_token: str) -> dict:
                 )
 
         if not user_id:
+            # No exact match, Discord or otherwise. Before treating this as
+            # a brand-new guest (or giving up on a remove), check for a
+            # close-but-inexact match against this event's own roster — a
+            # typo here would otherwise silently create a duplicate guest
+            # instead of updating the existing entry, or fail a remove with
+            # a generic "not found" when the admin just mistyped a name
+            # that's already on the roster.
+            close_match = _closest_roster_name_match(event, raw_user)
+
             if modal_type == "remove_rsvp_modal":
+                if close_match:
+                    return _ephemeral(
+                        f'Could not find "{raw_user}" — did you mean '
+                        f"**{close_match}**? Try again with their exact "
+                        "name, @mention, or numeric ID."
+                    )
                 return _ephemeral(
                     "Could not find that user — try again with their "
                     "@mention, numeric ID, or exact name."
                 )
+            if close_match:
+                return _ephemeral(
+                    f'No exact match for "{raw_user}" — did you mean '
+                    f"**{close_match}**? Use their exact name to update "
+                    "that entry, or a clearly different name to add a "
+                    "new guest."
+                )
             # No match at all, Discord or otherwise — add them as a new
             # guest with no Discord account, keyed by a synthetic ID. Any
             # trailing '*' on the typed name is stripped first so it
-            # isn't doubled by the one we add below.
+            # isn't doubled by the one we add below. Guards against the
+            # (astronomically unlikely) case of a fresh ID colliding with
+            # an existing guest already on this event's roster.
             user_id = generate_guest_id()
+            while user_id in (event.get("member_names") or {}):
+                user_id = generate_guest_id()
             is_new_guest = True
 
     if is_new_guest:

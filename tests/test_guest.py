@@ -34,9 +34,9 @@ class TestGenerateGuestId:
     def test_is_guest_id_round_trip(self):
         assert is_guest_id(generate_guest_id()) is True
 
-    def test_suffix_is_8_hex_chars(self):
+    def test_suffix_is_32_hex_chars(self):
         suffix = generate_guest_id().removeprefix(GUEST_ID_PREFIX)
-        assert len(suffix) == 8
+        assert len(suffix) == 32
         int(suffix, 16)  # raises ValueError if not valid hex
 
     def test_generates_unique_ids(self):
