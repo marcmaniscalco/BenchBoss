@@ -163,7 +163,7 @@ class TestGetEvents:
         reader = self._mock_reader(raw)
         assert len(reader.get_events()) == 2
 
-    def test_fetch_raises_on_http_error(self):
+    def test_fetch_retries_http_error_without_response(self):
         """An HTTPError with no `.response` attached (not the usual shape
         from `raise_for_status()`, but possible from other requests
         internals) is treated as retryable by default, then re-raised
