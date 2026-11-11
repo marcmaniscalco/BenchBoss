@@ -18,15 +18,20 @@ logger = logging.getLogger(__name__)
 # esportsdesk's webcal feed is intermittently flaky — a 200 with an empty
 # body, a connection error, or a 5xx. A short retry clears it up without
 # needing to wait for the next trigger (e.g. the next event's TTL
-# expiration) to retry. 4xx errors aren't retried — they're permanent
-# client errors (bad URL, auth, etc.) that a retry can't fix.
+# expiration) to retry. Other 4xx errors aren't retried — they're permanent
+# client errors (bad URL, auth, etc.) that a retry can't fix. 408 and 429
+# are the exception: those are transient (request timeout / rate limit)
+# even though they're nominally 4xx.
 #
 # Kept to 2 attempts: the stream Lambda's timeout is 30s
 # (infrastructure/template.yaml), and this runs before it posts/deletes
-# Discord messages, so worst case (2 * 10s request timeout + 1s delay = 21s)
-# needs to leave headroom for those calls rather than eating the whole budget.
+# Discord messages, so it needs to leave headroom for those calls rather
+# than eating the whole budget. `requests.get(timeout=10)` bounds connect
+# and per-read time, not the whole request, so "2 * 10s + 1s = 21s" is a
+# practical estimate for the common case, not a hard ceiling.
 _FETCH_ATTEMPTS = 2
 _FETCH_RETRY_DELAY_SECONDS = 1
+_RETRYABLE_4XX_STATUS_CODES = (408, 429)
 
 
 @dataclass
@@ -94,6 +99,7 @@ class WebCalReader:
                     isinstance(e, requests.HTTPError)
                     and e.response is not None
                     and 400 <= e.response.status_code < 500
+                    and e.response.status_code not in _RETRYABLE_4XX_STATUS_CODES
                 ):
                     raise
                 last_error = e

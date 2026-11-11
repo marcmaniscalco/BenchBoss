@@ -299,6 +299,47 @@ class TestFetch:
         mock_get.assert_called_once()
         mock_sleep.assert_not_called()
 
+    def test_http_429_is_retried(self):
+        """429 Too Many Requests is a 4xx but transient — a retry can
+        succeed once the rate limit clears."""
+        raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
+        error_response = MagicMock()
+        error_response.status_code = 429
+        error_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "429", response=error_response
+        )
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                side_effect=[error_response, self._mock_response(raw)],
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            assert reader._fetch() == raw
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_http_408_is_retried(self):
+        """408 Request Timeout is a 4xx but transient, same as 429."""
+        raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
+        error_response = MagicMock()
+        error_response.status_code = 408
+        error_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "408", response=error_response
+        )
+        with (
+            patch(
+                "bench_boss.calendar.requests.get",
+                side_effect=[error_response, self._mock_response(raw)],
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            assert reader._fetch() == raw
+        assert mock_get.call_count == 2
+        mock_sleep.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # WebCalReader.get_upcoming
