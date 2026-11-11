@@ -165,71 +165,10 @@ class TestGetEvents:
     def test_fetch_raises_on_http_error(self):
         mock_response = MagicMock()
         mock_response.raise_for_status.side_effect = Exception("404")
-        with (
-            patch("bench_boss.calendar.requests.get", return_value=mock_response),
-            patch("bench_boss.calendar.time.sleep"),
-        ):
+        with patch("bench_boss.calendar.requests.get", return_value=mock_response):
             reader = WebCalReader("https://example.com/cal.ics")
             with pytest.raises(Exception, match="404"):
                 reader.get_events()
-
-
-# ---------------------------------------------------------------------------
-# WebCalReader.get_events retry behavior
-# ---------------------------------------------------------------------------
-
-
-class TestGetEventsRetry:
-    def test_succeeds_after_transient_failure(self):
-        """A failure on the first attempt (e.g. an empty body) is retried
-        and succeeds once the server returns valid data."""
-        raw = make_ical([{"SUMMARY": "Event A", "DTSTART": dt_str(future(1))}])
-        reader = WebCalReader("https://example.com/cal.ics")
-        reader._fetch = MagicMock(side_effect=[b"", raw])
-
-        with patch("bench_boss.calendar.time.sleep") as mock_sleep:
-            events = reader.get_events()
-
-        assert len(events) == 1
-        assert events[0].summary == "Event A"
-        mock_sleep.assert_called_once_with(1.0)
-
-    def test_gives_up_after_max_retries(self):
-        """Once every attempt fails, the last error is raised and no more
-        attempts are made than max_retries allows."""
-        reader = WebCalReader("https://example.com/cal.ics", max_retries=2)
-        reader._fetch = MagicMock(side_effect=[b"", b""])
-
-        with patch("bench_boss.calendar.time.sleep"):
-            with pytest.raises(Exception):
-                reader.get_events()
-
-        assert reader._fetch.call_count == 2
-
-    def test_no_retry_needed_on_first_success(self):
-        """No sleep/retry happens when the first attempt already succeeds."""
-        raw = make_ical([{"SUMMARY": "Event A", "DTSTART": dt_str(future(1))}])
-        reader = WebCalReader("https://example.com/cal.ics")
-        reader._fetch = MagicMock(return_value=raw)
-
-        with patch("bench_boss.calendar.time.sleep") as mock_sleep:
-            reader.get_events()
-
-        mock_sleep.assert_not_called()
-        assert reader._fetch.call_count == 1
-
-    def test_backoff_increases_between_attempts(self):
-        """Backoff delay scales linearly with attempt number."""
-        reader = WebCalReader(
-            "https://example.com/cal.ics", max_retries=3, backoff_seconds=1.0
-        )
-        reader._fetch = MagicMock(side_effect=[b"", b"", b""])
-
-        with patch("bench_boss.calendar.time.sleep") as mock_sleep:
-            with pytest.raises(Exception):
-                reader.get_events()
-
-        assert mock_sleep.call_args_list == [((1.0,),), ((2.0,),)]
 
 
 # ---------------------------------------------------------------------------

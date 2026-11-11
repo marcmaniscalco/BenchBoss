@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -29,47 +28,17 @@ class CalendarEvent:
 
 
 class WebCalReader:
-    def __init__(self, url: str, max_retries: int = 2, backoff_seconds: float = 1.0):
+    def __init__(self, url: str):
         self.url = self._normalize_url(url)
-        self.max_retries = max_retries
-        self.backoff_seconds = backoff_seconds
 
     # ------------------------------------------------------------------
     # Public
     # ------------------------------------------------------------------
 
     def get_events(self) -> list[CalendarEvent]:
-        """Fetch and return all events from the calendar.
-
-        Retries transient failures — network errors, or a malformed/empty
-        body from the calendar server (seen in practice from
-        esportsdesk.com) — with linear backoff before giving up.
-        """
-        last_error: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                raw = self._fetch()
-                return self._parse(raw)
-            except Exception as e:
-                last_error = e
-                if attempt < self.max_retries:
-                    delay = self.backoff_seconds * attempt
-                    logger.warning(
-                        "Calendar fetch/parse attempt %d/%d failed for %s: %s "
-                        "— retrying in %.1fs",
-                        attempt,
-                        self.max_retries,
-                        self.url,
-                        e,
-                        delay,
-                    )
-                    time.sleep(delay)
-        logger.error(
-            "Calendar fetch/parse failed after %d attempt(s) for %s",
-            self.max_retries,
-            self.url,
-        )
-        raise last_error
+        """Fetch and return all events from the calendar."""
+        raw = self._fetch()
+        return self._parse(raw)
 
     def get_upcoming(self, days: int = 7) -> list[CalendarEvent]:
         """Return events starting within the next `days` days, sorted by start time."""
