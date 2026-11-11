@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # practical estimate for the common case, not a hard ceiling.
 _FETCH_ATTEMPTS = 2
 _FETCH_RETRY_DELAY_SECONDS = 1
+_FETCH_TIMEOUT_SECONDS = 10
 _RETRYABLE_4XX_STATUS_CODES = (408, 429)
 
 
@@ -87,7 +88,7 @@ class WebCalReader:
         last_error: Exception
         for attempt in range(1, _FETCH_ATTEMPTS + 1):
             try:
-                response = requests.get(self.url, timeout=10)
+                response = requests.get(self.url, timeout=_FETCH_TIMEOUT_SECONDS)
                 response.raise_for_status()
                 if response.content:
                     return response.content
