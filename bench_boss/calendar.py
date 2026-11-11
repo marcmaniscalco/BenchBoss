@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # esportsdesk's webcal feed is intermittently flaky — a 200 with an empty
 # body, a connection error, or a 5xx. A short retry clears it up without
 # needing to wait for the next trigger (e.g. the next event's TTL
-# expiration) to retry.
+# expiration) to retry. 4xx errors aren't retried — they're permanent
+# client errors (bad URL, auth, etc.) that a retry can't fix.
 #
 # Kept to 2 attempts: the stream Lambda's timeout is 30s
 # (infrastructure/template.yaml), and this runs before it posts/deletes
@@ -89,6 +90,12 @@ class WebCalReader:
                     f"Calendar fetch from {self.url} returned an empty body"
                 )
             except requests.RequestException as e:
+                if (
+                    isinstance(e, requests.HTTPError)
+                    and e.response is not None
+                    and 400 <= e.response.status_code < 500
+                ):
+                    raise
                 last_error = e
             logger.warning(
                 "Calendar fetch from %s failed (attempt %d/%d): %s",

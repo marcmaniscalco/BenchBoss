@@ -166,10 +166,14 @@ class TestGetEvents:
     def test_fetch_raises_on_http_error(self):
         mock_response = MagicMock()
         mock_response.raise_for_status.side_effect = Exception("404")
-        with patch("bench_boss.calendar.requests.get", return_value=mock_response):
+        with (
+            patch("bench_boss.calendar.requests.get", return_value=mock_response),
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
             reader = WebCalReader("https://example.com/cal.ics")
             with pytest.raises(Exception, match="404"):
                 reader.get_events()
+        mock_sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +263,9 @@ class TestFetch:
     def test_http_error_from_raise_for_status_is_retried(self):
         raw = make_ical([{"SUMMARY": "Event", "DTSTART": dt_str(future(1))}])
         error_response = MagicMock()
+        error_response.status_code = 503
         error_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
-            "503"
+            "503", response=error_response
         )
         with (
             patch(
@@ -273,6 +278,26 @@ class TestFetch:
             assert reader._fetch() == raw
         assert mock_get.call_count == 2
         mock_sleep.assert_called_once()
+
+    def test_http_4xx_error_is_not_retried(self):
+        """A 4xx is a permanent client error (bad URL, auth, etc.) that a
+        retry can't fix, so it should raise immediately."""
+        error_response = MagicMock()
+        error_response.status_code = 404
+        error_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "404", response=error_response
+        )
+        with (
+            patch(
+                "bench_boss.calendar.requests.get", return_value=error_response
+            ) as mock_get,
+            patch("bench_boss.calendar.time.sleep") as mock_sleep,
+        ):
+            reader = WebCalReader("https://example.com/cal.ics")
+            with pytest.raises(requests.exceptions.HTTPError, match="404"):
+                reader._fetch()
+        mock_get.assert_called_once()
+        mock_sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

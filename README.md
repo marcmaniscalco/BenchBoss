@@ -15,7 +15,7 @@ State lives in a DynamoDB table with TTL + Streams enabled. There is no VPC, no 
 BenchBoss/
 ├── bench_boss/
 │   ├── bot.py              # Core logic — signature verification + command handling
-│   ├── calendar.py         # WebCalReader — fetches and parses iCal calendars
+│   ├── calendar.py         # WebCalReader — fetches and parses iCal calendars, retrying transient (non-4xx) fetch failures
 │   ├── discord_api.py      # Embed and component builders
 │   ├── dynamo.py           # DynamoDB persistence for event RSVP state
 │   └── stream_handler.py   # DynamoDB stream event processor
