@@ -2297,7 +2297,11 @@ class TestRsvpEditModalSubmitGuests:
         mock_remove.assert_called_once_with("key1", "123456789")
         assert "Marc" in result["body"]["data"]["content"]
 
-    def test_add_typo_of_existing_guest_prompts_instead_of_duplicating(self):
+    def test_add_typo_of_existing_guest_warns_but_still_creates(self):
+        # A close-but-inexact match warns (so the admin can catch an
+        # actual typo) but doesn't block the add outright — blocking
+        # would make a legitimately similar name (e.g. "Jamie S." vs
+        # "Jamie T.") permanently impossible to add.
         event = make_stored_event(
             subs=["guest:aaaaaaaa"],
             member_names={"guest:aaaaaaaa": "Jamie Sub*"},
@@ -2313,9 +2317,33 @@ class TestRsvpEditModalSubmitGuests:
                 ),
                 bot_token="tok",
             )
-        mock_set.assert_not_called()
-        assert "Jamie Sub" in result["body"]["data"]["content"]
-        assert result["body"]["data"]["flags"] == 64
+        event_key, user_id, action, display_name = mock_set.call_args[0]
+        assert user_id.startswith("guest:")
+        assert display_name == "Jaime Sub*"
+        content = result["body"]["data"]["content"]
+        assert "new guest" in content.lower()
+        assert "Jamie Sub" in content
+
+    def test_add_legitimately_similar_name_is_not_blocked(self):
+        # The README's own disambiguation example ("Jamie S." vs
+        # "Jamie T.") must still be addable even though it's a close
+        # match for an existing roster entry.
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie S.*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "Jamie T.", "subs"),
+                bot_token="tok",
+            )
+        event_key, user_id, action, display_name = mock_set.call_args[0]
+        assert display_name == "Jamie T.*"
+        assert "new guest" in result["body"]["data"]["content"].lower()
 
     def test_remove_typo_of_existing_guest_suggests_exact_name(self):
         event = make_stored_event(
@@ -2507,6 +2535,26 @@ class TestSearchGuildMember:
     def test_no_results_returns_none(self):
         with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([])):
             assert _search_guild_member("g1", "Nobody", "tok") is None
+
+    def test_exact_match_ranked_second_is_still_found(self):
+        # Discord doesn't guarantee the real exact match ranks first — a
+        # prefix match like "Mike_Smith" could outrank the exact "Mike".
+        # limit: 1 would only ever see the first result; this must scan
+        # the whole page instead.
+        ranked_first = self._member("u1", username="mike_smith")
+        exact_match = self._member("u2", username="mike")
+        with patch(
+            "bench_boss.bot.requests.get",
+            return_value=self._ok_resp([ranked_first, exact_match]),
+        ):
+            assert _search_guild_member("g1", "Mike", "tok") == "u2"
+
+    def test_requests_more_than_one_result(self):
+        with patch(
+            "bench_boss.bot.requests.get", return_value=self._ok_resp([])
+        ) as mock_get:
+            _search_guild_member("g1", "Jamie", "tok")
+        assert mock_get.call_args.kwargs["params"]["limit"] > 1
 
     def test_raises_on_api_failure(self):
         with patch("bench_boss.bot.requests.get", return_value=self._fail_resp()):
