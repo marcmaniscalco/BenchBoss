@@ -21,4 +21,8 @@ def is_guest_id(user_id: str) -> bool:
 
 
 def generate_guest_id() -> str:
-    return f"{GUEST_ID_PREFIX}{uuid.uuid4().hex[:8]}"
+    # Full 32-char hex, not a truncated prefix of it — collision odds are
+    # already negligible, but truncating buys nothing since the ID is
+    # never shown to users, and a collision would silently merge two
+    # different guests into one roster entry.
+    return f"{GUEST_ID_PREFIX}{uuid.uuid4().hex}"

@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 from nacl.signing import SigningKey
 
 from bench_boss.bot import (
@@ -16,14 +17,18 @@ from bench_boss.bot import (
     PONG,
     UPDATE_MESSAGE,
     _ChannelPostRejected,
+    _closest_roster_name_match,
     _fetch_guild_member,
     _fetch_member_display_name,
     _format_event_line,
     _get_user_id,
+    _GuildSearchFailed,
+    _normalize_name_for_match,
     _parse_duration_minutes,
     _parse_event_datetime,
     _parse_event_modal_fields,
     _post_channel_message,
+    _search_guild_member,
     _send_dm_events,
     _update_channel_message,
     handle_interaction,
@@ -1451,6 +1456,39 @@ def make_rsvp_edit_submit(
     }
 
 
+class TestNormalizeNameForMatch:
+    def test_strips_single_trailing_star(self):
+        assert _normalize_name_for_match("Jamie Sub*") == "jamie sub"
+
+    def test_strips_multiple_trailing_stars(self):
+        # rstrip("*") removes every trailing '*', not just one — pin this
+        # since "Bob**" matching "Bob" relies on it.
+        assert _normalize_name_for_match("Bob**") == "bob"
+
+    def test_no_trailing_star_unchanged_besides_case(self):
+        assert _normalize_name_for_match("Bob") == "bob"
+
+    def test_strips_surrounding_whitespace(self):
+        assert _normalize_name_for_match("  Bob*  ") == "bob"
+
+
+class TestClosestRosterNameMatch:
+    def test_finds_close_typo(self):
+        event = make_stored_event(member_names={"guest:aaaaaaaa": "Jamie Sub*"})
+        assert _closest_roster_name_match(event, "Jaime Sub") == "Jamie Sub*"
+
+    def test_no_match_for_unrelated_name(self):
+        event = make_stored_event(member_names={"guest:aaaaaaaa": "Jamie Sub*"})
+        assert _closest_roster_name_match(event, "Totally Different") is None
+
+    def test_no_roster_returns_none(self):
+        assert _closest_roster_name_match(make_stored_event(), "Anyone") is None
+
+    def test_empty_name_returns_none(self):
+        event = make_stored_event(member_names={"guest:aaaaaaaa": "Jamie Sub*"})
+        assert _closest_roster_name_match(event, "   ") is None
+
+
 class TestRsvpEditModalSubmit:
     def test_add_calls_set_rsvp(self):
         with (
@@ -1521,7 +1559,9 @@ class TestRsvpEditModalSubmit:
         event = {**make_stored_event(), "guild_id": "guild1"}
         mock_get_resp = MagicMock()
         mock_get_resp.ok = True
-        mock_get_resp.json.return_value = [{"user": {"id": "999"}}]
+        mock_get_resp.json.return_value = [
+            {"user": {"id": "999", "username": "johndoe"}}
+        ]
         with (
             patch("bench_boss.bot.get_event", return_value=event),
             patch("bench_boss.bot.requests.get", return_value=mock_get_resp),
@@ -2257,6 +2297,132 @@ class TestRsvpEditModalSubmitGuests:
         mock_remove.assert_called_once_with("key1", "123456789")
         assert "Marc" in result["body"]["data"]["content"]
 
+    def test_add_typo_of_existing_guest_warns_but_still_creates(self):
+        # A close-but-inexact match warns (so the admin can catch an
+        # actual typo) but doesn't block the add outright — blocking
+        # would make a legitimately similar name (e.g. "Jamie S." vs
+        # "Jamie T.") permanently impossible to add.
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Jaime Sub", "accepted"
+                ),
+                bot_token="tok",
+            )
+        event_key, user_id, action, display_name = mock_set.call_args[0]
+        assert user_id.startswith("guest:")
+        assert display_name == "Jaime Sub*"
+        content = result["body"]["data"]["content"]
+        assert "new guest" in content.lower()
+        assert "Jamie Sub" in content
+
+    def test_add_legitimately_similar_name_is_not_blocked(self):
+        # The README's own disambiguation example ("Jamie S." vs
+        # "Jamie T.") must still be addable even though it's a close
+        # match for an existing roster entry.
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie S.*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "Jamie T.", "subs"),
+                bot_token="tok",
+            )
+        event_key, user_id, action, display_name = mock_set.call_args[0]
+        assert display_name == "Jamie T.*"
+        assert "new guest" in result["body"]["data"]["content"].lower()
+
+    def test_remove_typo_of_existing_guest_suggests_exact_name(self):
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.remove_rsvp") as mock_remove,
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "Jaime Sub"),
+                bot_token="tok",
+            )
+        mock_remove.assert_not_called()
+        assert "Jamie Sub" in result["body"]["data"]["content"]
+
+    def test_add_genuinely_different_name_still_creates_new_guest(self):
+        # Regression: an existing roster entry shouldn't make the typo
+        # guard block an admin adding an unrelated new guest.
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Jamie Sub*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+        ):
+            result = handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Totally Different", "accepted"
+                ),
+                bot_token="tok",
+            )
+        mock_set.assert_called_once()
+        assert "new guest" in result["body"]["data"]["content"].lower()
+
+    def test_add_missing_event_returns_early(self):
+        with patch("bench_boss.bot.get_event", return_value=None):
+            result = handle_interaction(
+                make_rsvp_edit_submit("add_rsvp_modal", "key1", "Nobody", "accepted"),
+                bot_token="tok",
+            )
+        assert "Event not found" in result["body"]["data"]["content"]
+
+    def test_remove_missing_event_returns_early(self):
+        with patch("bench_boss.bot.get_event", return_value=None):
+            result = handle_interaction(
+                make_rsvp_edit_submit("remove_rsvp_modal", "key1", "Nobody"),
+                bot_token="tok",
+            )
+        assert "Event not found" in result["body"]["data"]["content"]
+
+    def test_guest_id_collision_regenerates(self):
+        event = make_stored_event(
+            subs=["guest:aaaaaaaa"],
+            member_names={"guest:aaaaaaaa": "Someone Else*"},
+        )
+        with (
+            patch("bench_boss.bot.get_event", return_value=event),
+            patch("bench_boss.bot.set_rsvp") as mock_set,
+            patch("bench_boss.bot._update_channel_message"),
+            patch(
+                "bench_boss.bot.generate_guest_id",
+                side_effect=["guest:aaaaaaaa", "guest:bbbbbbbb"],
+            ) as mock_generate,
+        ):
+            handle_interaction(
+                make_rsvp_edit_submit(
+                    "add_rsvp_modal", "key1", "Brand New", "accepted"
+                ),
+                bot_token="tok",
+            )
+        assert mock_generate.call_count == 2
+        mock_set.assert_called_once_with(
+            "key1", "guest:bbbbbbbb", "accepted", "Brand New*"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _fetch_member_display_name
@@ -2317,6 +2483,90 @@ class TestFetchMemberDisplayName:
             _fetch_member_display_name("guild1", "user1", "tok")
         url = mock_get.call_args[0][0]
         assert "guilds/guild1/members/user1" in url
+
+
+# ---------------------------------------------------------------------------
+# _search_guild_member
+# ---------------------------------------------------------------------------
+
+
+class TestSearchGuildMember:
+    def _ok_resp(self, members):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = members
+        return resp
+
+    def _fail_resp(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 500
+        return resp
+
+    def _member(self, user_id, nick=None, global_name=None, username=None):
+        return {
+            "nick": nick,
+            "user": {"id": user_id, "global_name": global_name, "username": username},
+        }
+
+    def test_exact_username_match_returns_id(self):
+        member = self._member("u1", username="jamiesub")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "jamiesub", "tok") == "u1"
+
+    def test_exact_nick_match_is_case_insensitive(self):
+        member = self._member("u1", nick="Jamie Sub")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "JAMIE SUB", "tok") == "u1"
+
+    def test_exact_global_name_match_returns_id(self):
+        member = self._member("u1", global_name="Jamie")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "Jamie", "tok") == "u1"
+
+    def test_prefix_only_match_is_rejected(self):
+        # Discord's search is a prefix match — "Mike" would otherwise
+        # match an unrelated "Mike_Smith". None of nick/global_name/
+        # username is an exact match here, so this must not resolve.
+        member = self._member("u1", username="mike_smith")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "Mike", "tok") is None
+
+    def test_no_results_returns_none(self):
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([])):
+            assert _search_guild_member("g1", "Nobody", "tok") is None
+
+    def test_exact_match_ranked_second_is_still_found(self):
+        # Discord doesn't guarantee the real exact match ranks first — a
+        # prefix match like "Mike_Smith" could outrank the exact "Mike".
+        # limit: 1 would only ever see the first result; this must scan
+        # the whole page instead.
+        ranked_first = self._member("u1", username="mike_smith")
+        exact_match = self._member("u2", username="mike")
+        with patch(
+            "bench_boss.bot.requests.get",
+            return_value=self._ok_resp([ranked_first, exact_match]),
+        ):
+            assert _search_guild_member("g1", "Mike", "tok") == "u2"
+
+    def test_requests_more_than_one_result(self):
+        with patch(
+            "bench_boss.bot.requests.get", return_value=self._ok_resp([])
+        ) as mock_get:
+            _search_guild_member("g1", "Jamie", "tok")
+        assert mock_get.call_args.kwargs["params"]["limit"] > 1
+
+    def test_raises_on_api_failure(self):
+        with patch("bench_boss.bot.requests.get", return_value=self._fail_resp()):
+            with pytest.raises(_GuildSearchFailed):
+                _search_guild_member("g1", "Jamie", "tok")
+
+    def test_raises_on_request_exception(self):
+        with patch(
+            "bench_boss.bot.requests.get", side_effect=requests.ConnectionError()
+        ):
+            with pytest.raises(_GuildSearchFailed):
+                _search_guild_member("g1", "Jamie", "tok")
 
 
 # ---------------------------------------------------------------------------
