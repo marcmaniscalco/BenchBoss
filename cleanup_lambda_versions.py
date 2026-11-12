@@ -48,17 +48,27 @@ def _function_names_in_stack(cfn, stack_name: str) -> list[str]:
     ]
 
 
-def _older_than_grace_period(last_modified: str, now: datetime) -> bool:
+def _older_than_grace_period(
+    last_modified: str, now: datetime, *, function_name: str, version: str
+) -> bool:
     """True if a version's LastModified is older than GRACE_PERIOD.
 
     An unparseable or missing timestamp is treated as "not old enough" --
     when the age can't be determined, the safe default is to keep the
     version rather than risk deleting something an in-flight deploy still
-    needs.
+    needs. That default fails silent by design (nothing crashes), so this
+    prints a warning on the way out -- a persistent parsing mismatch would
+    otherwise quietly stop all cleanup for this function, with versions
+    piling up again and nothing in the build log to say why.
     """
     try:
         age = now - datetime.fromisoformat(last_modified)
     except (TypeError, ValueError):
+        print(
+            f"  WARNING: {function_name}:{version} has an unparseable "
+            f"LastModified ({last_modified!r}) -- keeping it rather than "
+            "risking an in-flight deploy's version"
+        )
         return False
     return age > GRACE_PERIOD
 
@@ -75,7 +85,12 @@ def _cleanup_function(lambda_client, function_name: str) -> None:
         for page in paginator.paginate(FunctionName=function_name)
         for v in page["Versions"]
         if v["Version"] not in ("$LATEST", live_version)
-        and _older_than_grace_period(v.get("LastModified", ""), now)
+        and _older_than_grace_period(
+            v.get("LastModified", ""),
+            now,
+            function_name=function_name,
+            version=v["Version"],
+        )
     ]
 
     deleted = 0

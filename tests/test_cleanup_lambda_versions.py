@@ -26,20 +26,43 @@ class TestOlderThanGracePeriod:
     def test_timestamp_older_than_grace_period(self):
         now = datetime.now(UTC)
         old = (now - GRACE_PERIOD - timedelta(minutes=1)).isoformat()
-        assert _older_than_grace_period(old, now) is True
+        assert _older_than_grace_period(old, now, function_name="f", version="5")
 
     def test_timestamp_within_grace_period(self):
         now = datetime.now(UTC)
         recent = (now - timedelta(minutes=1)).isoformat()
-        assert _older_than_grace_period(recent, now) is False
+        assert not _older_than_grace_period(recent, now, function_name="f", version="8")
+
+    def test_real_lambda_format_is_parsed_correctly(self):
+        # Lambda's actual LastModified format -- "+0000", no colon in the
+        # offset -- not .isoformat()'s "+00:00". The other tests here all
+        # use .isoformat() and would stay green even if fromisoformat
+        # stopped accepting Lambda's real format, so this one pins that
+        # specifically.
+        now = datetime.now(UTC)
+        real_format = "2024-01-01T12:00:00.000+0000"
+        assert _older_than_grace_period(
+            real_format, now, function_name="f", version="5"
+        )
 
     def test_unparseable_timestamp_is_kept(self):
         now = datetime.now(UTC)
-        assert _older_than_grace_period("not-a-timestamp", now) is False
+        assert not _older_than_grace_period(
+            "not-a-timestamp", now, function_name="f", version="4"
+        )
 
     def test_missing_timestamp_is_kept(self):
         now = datetime.now(UTC)
-        assert _older_than_grace_period("", now) is False
+        assert not _older_than_grace_period("", now, function_name="f", version="4")
+
+    def test_unparseable_timestamp_prints_a_warning(self, capsys):
+        now = datetime.now(UTC)
+        _older_than_grace_period(
+            "not-a-timestamp", now, function_name="my-func", version="4"
+        )
+        output = capsys.readouterr().out
+        assert "my-func:4" in output
+        assert "not-a-timestamp" in output
 
 
 # ---------------------------------------------------------------------------
