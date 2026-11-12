@@ -721,12 +721,20 @@ for versions nothing was invoking anymore.
 
 `cleanup_lambda_versions.py` fixes this: given a stack name, it finds every
 `AWS::Lambda::Function` in that stack, reads what version the `live` alias
-currently points to, and deletes every other version. It's safe to run
-after every deploy — the Function URL and the DynamoDB Streams trigger both
-target the `live` alias, never a specific version — which is exactly what
-the **CleanupQA**/**CleanupProd** pipeline stages do. Run it manually
-against any stack if versions ever pile up outside the pipeline (e.g. after
-a run of `make deploy`):
+currently points to, and deletes every other version **older than a 10-minute
+grace period**. It's safe to run after every deploy — the Function URL and
+the DynamoDB Streams trigger both target the `live` alias, never a specific
+version — which is exactly what the **CleanupQA**/**CleanupProd** pipeline
+stages do. The grace period exists because CodePipeline only serializes a
+single *stage* at a time, not a whole execution: two Prod-bound executions
+approved close together can have one's CleanupProd stage running while the
+other's DeployProd is still publishing a new version on the same function,
+which isn't aliased to `live` yet and would otherwise look "not live" and
+get deleted out from under the in-flight deploy (this happened in
+production — see the incident note in `cleanup_lambda_versions.py`). A
+version skipped for being too new just gets caught by the next run if it
+really is orphaned. Run the script manually against any stack if versions
+ever pile up outside the pipeline (e.g. after a run of `make deploy`):
 
 ```powershell
 pipenv run python cleanup_lambda_versions.py --stack-name bench-boss-qa

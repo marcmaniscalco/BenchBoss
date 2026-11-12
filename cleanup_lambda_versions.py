@@ -13,13 +13,30 @@ Run after every deploy (see the CleanupQA/CleanupProd pipeline stages in
 infrastructure/pipeline.yaml) to delete every version except the one `live`
 currently points to.
 
+CodePipeline only serializes a single *stage* at a time -- it does not wait
+for one execution to clear every later stage before starting the next
+execution's earlier stages. Two Prod-bound executions approved close
+together can therefore have this script's CleanupProd run (for execution A)
+while a separate DeployProd (execution B) is still publishing a new version
+on the same function. That new version isn't live yet -- the alias update
+is one of the last steps of a deploy -- so without a grace period this
+script deletes it as "not live", and the deploy that's still using it then
+fails with "Function not found" on the version CloudFormation just created.
+GRACE_PERIOD guards against exactly that: skip anything new enough that it
+might belong to a deploy that's still in flight. A skipped version isn't
+lost -- it's just not live, so the next run's "not live" check catches it
+again.
+
 Usage: python cleanup_lambda_versions.py --stack-name bench-boss-qa
 """
 
 import argparse
+from datetime import UTC, datetime, timedelta
 
 import boto3
 from botocore.exceptions import ClientError
+
+GRACE_PERIOD = timedelta(minutes=10)
 
 
 def _function_names_in_stack(cfn, stack_name: str) -> list[str]:
@@ -31,17 +48,49 @@ def _function_names_in_stack(cfn, stack_name: str) -> list[str]:
     ]
 
 
+def _older_than_grace_period(
+    last_modified: str, now: datetime, *, function_name: str, version: str
+) -> bool:
+    """True if a version's LastModified is older than GRACE_PERIOD.
+
+    An unparseable or missing timestamp is treated as "not old enough" --
+    when the age can't be determined, the safe default is to keep the
+    version rather than risk deleting something an in-flight deploy still
+    needs. That default fails silent by design (nothing crashes), so this
+    prints a warning on the way out -- a persistent parsing mismatch would
+    otherwise quietly stop all cleanup for this function, with versions
+    piling up again and nothing in the build log to say why.
+    """
+    try:
+        age = now - datetime.fromisoformat(last_modified)
+    except (TypeError, ValueError):
+        print(
+            f"  WARNING: {function_name}:{version} has an unparseable "
+            f"LastModified ({last_modified!r}) -- keeping it rather than "
+            "risking an in-flight deploy's version"
+        )
+        return False
+    return age > GRACE_PERIOD
+
+
 def _cleanup_function(lambda_client, function_name: str) -> None:
     live_version = lambda_client.get_alias(FunctionName=function_name, Name="live")[
         "FunctionVersion"
     ]
 
+    now = datetime.now(UTC)
     paginator = lambda_client.get_paginator("list_versions_by_function")
     versions = [
         v["Version"]
         for page in paginator.paginate(FunctionName=function_name)
         for v in page["Versions"]
         if v["Version"] not in ("$LATEST", live_version)
+        and _older_than_grace_period(
+            v.get("LastModified", ""),
+            now,
+            function_name=function_name,
+            version=v["Version"],
+        )
     ]
 
     deleted = 0
