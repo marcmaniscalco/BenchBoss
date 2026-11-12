@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 from nacl.signing import SigningKey
 
 from bench_boss.bot import (
@@ -21,11 +22,13 @@ from bench_boss.bot import (
     _fetch_member_display_name,
     _format_event_line,
     _get_user_id,
+    _GuildSearchFailed,
     _normalize_name_for_match,
     _parse_duration_minutes,
     _parse_event_datetime,
     _parse_event_modal_fields,
     _post_channel_message,
+    _search_guild_member,
     _send_dm_events,
     _update_channel_message,
     handle_interaction,
@@ -1556,7 +1559,9 @@ class TestRsvpEditModalSubmit:
         event = {**make_stored_event(), "guild_id": "guild1"}
         mock_get_resp = MagicMock()
         mock_get_resp.ok = True
-        mock_get_resp.json.return_value = [{"user": {"id": "999"}}]
+        mock_get_resp.json.return_value = [
+            {"user": {"id": "999", "username": "johndoe"}}
+        ]
         with (
             patch("bench_boss.bot.get_event", return_value=event),
             patch("bench_boss.bot.requests.get", return_value=mock_get_resp),
@@ -2450,6 +2455,70 @@ class TestFetchMemberDisplayName:
             _fetch_member_display_name("guild1", "user1", "tok")
         url = mock_get.call_args[0][0]
         assert "guilds/guild1/members/user1" in url
+
+
+# ---------------------------------------------------------------------------
+# _search_guild_member
+# ---------------------------------------------------------------------------
+
+
+class TestSearchGuildMember:
+    def _ok_resp(self, members):
+        resp = MagicMock()
+        resp.ok = True
+        resp.json.return_value = members
+        return resp
+
+    def _fail_resp(self):
+        resp = MagicMock()
+        resp.ok = False
+        resp.status_code = 500
+        return resp
+
+    def _member(self, user_id, nick=None, global_name=None, username=None):
+        return {
+            "nick": nick,
+            "user": {"id": user_id, "global_name": global_name, "username": username},
+        }
+
+    def test_exact_username_match_returns_id(self):
+        member = self._member("u1", username="jamiesub")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "jamiesub", "tok") == "u1"
+
+    def test_exact_nick_match_is_case_insensitive(self):
+        member = self._member("u1", nick="Jamie Sub")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "JAMIE SUB", "tok") == "u1"
+
+    def test_exact_global_name_match_returns_id(self):
+        member = self._member("u1", global_name="Jamie")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "Jamie", "tok") == "u1"
+
+    def test_prefix_only_match_is_rejected(self):
+        # Discord's search is a prefix match — "Mike" would otherwise
+        # match an unrelated "Mike_Smith". None of nick/global_name/
+        # username is an exact match here, so this must not resolve.
+        member = self._member("u1", username="mike_smith")
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([member])):
+            assert _search_guild_member("g1", "Mike", "tok") is None
+
+    def test_no_results_returns_none(self):
+        with patch("bench_boss.bot.requests.get", return_value=self._ok_resp([])):
+            assert _search_guild_member("g1", "Nobody", "tok") is None
+
+    def test_raises_on_api_failure(self):
+        with patch("bench_boss.bot.requests.get", return_value=self._fail_resp()):
+            with pytest.raises(_GuildSearchFailed):
+                _search_guild_member("g1", "Jamie", "tok")
+
+    def test_raises_on_request_exception(self):
+        with patch(
+            "bench_boss.bot.requests.get", side_effect=requests.ConnectionError()
+        ):
+            with pytest.raises(_GuildSearchFailed):
+                _search_guild_member("g1", "Jamie", "tok")
 
 
 # ---------------------------------------------------------------------------

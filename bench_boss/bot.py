@@ -880,8 +880,16 @@ class _GuildSearchFailed(Exception):
 def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | None:
     """Search a guild for a member by username.
 
+    Discord's search endpoint does a prefix match, so a query like "Mike"
+    would otherwise match an unrelated member such as "Mike_Smith" with no
+    indication to the caller that it was a guess. Only accept the result
+    when it's an exact (case-insensitive) match on username, nick, or
+    global_name — a mere prefix match is treated as "no match", so the
+    caller safely falls back to creating a new guest instead of silently
+    reassigning the RSVP to the wrong real person.
+
     Returns the user ID, or None if the search succeeded but found no
-    match. Raises `_GuildSearchFailed` if the request itself failed.
+    exact match. Raises `_GuildSearchFailed` if the request itself failed.
     """
     try:
         resp = requests.get(
@@ -900,7 +908,19 @@ def _search_guild_member(guild_id: str, query: str, bot_token: str) -> str | Non
         logger.warning("Guild member search failed for %r: %s", query, resp.status_code)
         raise _GuildSearchFailed(resp.status_code)
     members = resp.json()
-    return members[0]["user"]["id"] if members else None
+    if not members:
+        return None
+
+    member = members[0]
+    target = _normalize_name_for_match(query)
+    candidates = (
+        member.get("nick"),
+        member.get("user", {}).get("global_name"),
+        member.get("user", {}).get("username"),
+    )
+    if not any(c and _normalize_name_for_match(c) == target for c in candidates):
+        return None
+    return member["user"]["id"]
 
 
 def _fetch_guild_member(guild_id: str, user_id: str, bot_token: str) -> dict | None:
